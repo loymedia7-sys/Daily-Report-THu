@@ -24,6 +24,7 @@ import { DAY_NAMES } from '../utils/dateUtils';
 import { uploadLogoImage } from '../utils/cloudinaryUpload';
 import { updatePwaManifestAndIcons } from '../utils/pwaIconUpdater';
 import { TRANSLATIONS } from '../utils/translations';
+import { uploadWorkPhotoToCloudinary } from '../utils/imageUploadService';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -55,6 +56,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [isResetting, setIsResetting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [isTestingCloudinary, setIsTestingCloudinary] = useState(false);
+  const [testCloudinaryResult, setTestCloudinaryResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const handleTestCloudinary = async () => {
+    try {
+      setIsTestingCloudinary(true);
+      setTestCloudinaryResult(null);
+      const canvas = document.createElement('canvas');
+      canvas.width = 1;
+      canvas.height = 1;
+      const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/png'));
+
+      const res = await uploadWorkPhotoToCloudinary(blob, {
+        cloudName: profile.cloudinaryCloudName,
+        uploadPreset: profile.cloudinaryUploadPreset,
+      });
+
+      setTestCloudinaryResult({
+        success: true,
+        message: `✓ Success! Connected & uploaded test photo (${res.secureUrl})`,
+      });
+    } catch (err: any) {
+      setTestCloudinaryResult({
+        success: false,
+        message: `✗ Error: ${err.message || String(err)}`,
+      });
+    } finally {
+      setIsTestingCloudinary(false);
+    }
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -323,9 +354,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
               {showCloudinaryConfig && (
                 <div className="mt-3 p-3.5 bg-white rounded-xl border border-indigo-200 space-y-3 animate-fadeIn text-xs">
-                  <p className="text-[11px] text-slate-600">
-                    Configured Cloudinary account credentials for automatic cloud logo hosting:
-                  </p>
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-[11px] space-y-1">
+                    <p className="font-bold flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Cloudinary Setup Requirement ("Upload preset not found"):</span>
+                    </p>
+                    <p>
+                      To upload photos, you must create an <strong>Unsigned</strong> upload preset named <strong>REPORT</strong> in your Cloudinary console ({profile.cloudinaryCloudName || 'dismpss5e'} → Settings → Upload → Upload presets → Add upload preset → Signing Mode: Unsigned).
+                    </p>
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[11px] font-bold text-slate-700 mb-1">Cloud Name</label>
@@ -347,6 +384,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       />
                     </div>
+                  </div>
+                  <div className="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <button
+                      type="button"
+                      onClick={handleTestCloudinary}
+                      disabled={isTestingCloudinary}
+                      className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-xs flex items-center gap-1.5 disabled:opacity-50 cursor-pointer text-xs"
+                    >
+                      {isTestingCloudinary ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Cloud className="w-3.5 h-3.5" />}
+                      <span>{isTestingCloudinary ? 'Testing Connection...' : 'Test Cloudinary Connection'}</span>
+                    </button>
+                    {testCloudinaryResult && (
+                      <span className={`text-[11px] font-semibold break-all ${testCloudinaryResult.success ? 'text-emerald-700' : 'text-rose-600'}`}>
+                        {testCloudinaryResult.message}
+                      </span>
+                    )}
                   </div>
                 </div>
               )}
