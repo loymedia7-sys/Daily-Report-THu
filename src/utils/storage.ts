@@ -142,10 +142,18 @@ export function resetAppState(): AppState {
 /**
  * Save state to localStorage
  */
-export function saveAppState(state: AppState): void {
+export function saveAppState(state: AppState): boolean {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    const serialized = JSON.stringify(state);
+    const sizeBytes = new TextEncoder().encode(serialized).length;
+    const FIVE_MB = 5 * 1024 * 1024;
+    if (sizeBytes > FIVE_MB) {
+      console.warn(`[WARNING] AppState payload size (${Math.round(sizeBytes / 1024 / 1024 * 100) / 100} MB) exceeds localStorage ~5MB limit! Base64 photos may cause storage failure.`);
+    }
+    localStorage.setItem(STORAGE_KEY, serialized);
+    return true;
   } catch (err) {
     console.error('Error saving app state to localStorage:', err);
+    return false;
   }
 }

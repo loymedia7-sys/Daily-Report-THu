@@ -225,6 +225,8 @@ export interface Translations {
   tableHeaderSchedule: string;
   tableHeaderNotes: string;
   noMatchingLogs: string;
+  storageFullWarning: string;
+  cloudSaveFailedWarning: string;
 
   // Settings Modal
   settingsTitle: string;
@@ -576,6 +578,8 @@ export const TRANSLATIONS: Record<Language, Translations> = {
     tableHeaderSchedule: 'Schedule / Type',
     tableHeaderNotes: 'Notes / Remarks',
     noMatchingLogs: 'No matching log entries found.',
+    storageFullWarning: 'Storage full or save failed, photo/data not saved locally.',
+    cloudSaveFailedWarning: 'Cloud sync failed, report could not be saved to cloud.',
 
     // Settings Modal
     settingsTitle: 'Settings & Profile',
@@ -927,6 +931,8 @@ export const TRANSLATIONS: Record<Language, Translations> = {
     tableHeaderSchedule: 'កាលវិភាគ / ប្រភេទ',
     tableHeaderNotes: 'កំណត់ចំណាំការងារ',
     noMatchingLogs: 'មិនមានទិន្នន័យត្រូវគ្នានឹងការស្វែងរកទេ។',
+    storageFullWarning: 'អង្គផ្ទុកទិន្នន័យเต็ม ឬការរក្សាទុកបរាជ័យ ទិន្នន័យមិនអាចរក្សាទុកក្នុងម៉ាស៊ីនបានទេ។',
+    cloudSaveFailedWarning: 'ការបញ្ជូនទិន្នន័យទៅពពក (Cloud) មិនបានសម្រេចទេ។',
 
     // Settings Modal
     settingsTitle: 'ការកំណត់ និងព័ត៌មានបុគ្គលិក',

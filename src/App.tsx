@@ -45,6 +45,8 @@ import {
   seedInitialFirestoreData,
   resetAllFirestoreUserData
 } from './utils/firestoreService';
+import { drainUploadQueue } from './utils/imageUploadService';
+import { TRANSLATIONS } from './utils/translations';
 
 import { DesktopSidebar } from './components/navigation/DesktopSidebar';
 import { MobileBottomNav } from './components/navigation/MobileBottomNav';
@@ -74,6 +76,10 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState<string>(() => formatDateKey(new Date()));
   const [currentNavView, setCurrentNavView] = useState<MainNavView>('dashboard');
   const [currentView, setCurrentView] = useState<'checklist' | 'summary'>('checklist');
+
+  const currentLanguage = appState.userProfile?.language || 'en';
+  const t = TRANSLATIONS[currentLanguage] || TRANSLATIONS.en;
+  const [saveWarning, setSaveWarning] = useState<string | null>(null);
 
   // PWA Install Hook
   const {
@@ -184,19 +190,33 @@ export default function App() {
   }, [selectedDate]);
 
   // Helpers to update day report
-  const updateCurrentReport = (updater: (prevReport: DayReport) => DayReport) => {
+  const updateCurrentReport = async (updater: (prevReport: DayReport) => DayReport): Promise<boolean> => {
     const updated = updater(currentReport);
-    setAppState((prev) => ({
-      ...prev,
+    const nextAppState = {
+      ...appState,
       reports: {
-        ...prev.reports,
+        ...appState.reports,
         [selectedDate]: updated,
       },
-    }));
+    };
+    const localSuccess = saveAppState(nextAppState);
+    if (!localSuccess) {
+      setSaveWarning(t.storageFullWarning);
+      return false;
+    } else {
+      setSaveWarning(null);
+    }
+
+    setAppState(nextAppState);
 
     if (authUser) {
-      saveDayReportToFirestore(authUser.uid, updated);
+      const cloudSuccess = await saveDayReportToFirestore(authUser.uid, updated);
+      if (!cloudSuccess) {
+        setSaveWarning(t.cloudSaveFailedWarning);
+        return false;
+      }
     }
+    return true;
   };
 
   // ==========================================
@@ -574,8 +594,8 @@ export default function App() {
   // ==========================================
   const [isActivityFormOpen, setIsActivityFormOpen] = useState(false);
 
-  const handleSaveActivity = (activity: WorkActivity) => {
-    updateCurrentReport((rep) => {
+  const handleSaveActivity = async (activity: WorkActivity): Promise<boolean> => {
+    return await updateCurrentReport((rep) => {
       const existing = rep.activities || [];
       const index = existing.findIndex((a) => a.id === activity.id);
       let updatedActivities: WorkActivity[];
@@ -591,8 +611,8 @@ export default function App() {
     });
   };
 
-  const handleDeleteActivity = (activityId: string) => {
-    updateCurrentReport((rep) => {
+  const handleDeleteActivity = async (activityId: string): Promise<boolean> => {
+    return await updateCurrentReport((rep) => {
       const existing = rep.activities || [];
       return {
         ...rep,
@@ -601,8 +621,8 @@ export default function App() {
     });
   };
 
-  const handleSavePhotoToActivity = (activityId: string, photo: WorkActivityPhoto) => {
-    updateCurrentReport((rep) => {
+  const handleSavePhotoToActivity = async (activityId: string, photo: WorkActivityPhoto): Promise<boolean> => {
+    return await updateCurrentReport((rep) => {
       const existing = rep.activities || [];
       const updated = existing.map((a) => {
         if (a.id === activityId) {
@@ -621,8 +641,78 @@ export default function App() {
     });
   };
 
-  const handleSavePhotoToTodayVault = (photo: WorkActivityPhoto) => {
-    updateCurrentReport((rep) => {
+  const handlePhotoSynced = (photoId: string, cloudUrl: string, thumbnailUrl: string) => {
+    setAppState((prev) => {
+      const updatedReports = { ...prev.reports };
+      let targetDate: string | null = null;
+
+      for (const dKey of Object.keys(updatedReports)) {
+        const rep = updatedReports[dKey];
+        const hasPhoto = (rep.activities || []).some(
+          (act) => (act.photos || []).some((p) => p.photoId === photoId) || act.id === photoId
+        );
+        if (hasPhoto) {
+          targetDate = dKey;
+          break;
+        }
+      }
+
+      if (!targetDate) {
+        targetDate = selectedDate;
+      }
+
+      const rep = updatedReports[targetDate] || createNewDayReport(targetDate, prev.defaultSchedule, prev.userProfile);
+      const updatedActivities = (rep.activities || []).map((act) => {
+        const photos = act.photos || [];
+        const updatedPhotos = photos.map((p) =>
+          p.photoId === photoId
+            ? { ...p, imageUrl: cloudUrl, thumbnailUrl, syncStatus: 'synced' as const, uploadedAt: new Date().toISOString() }
+            : p
+        );
+        return {
+          ...act,
+          photos: updatedPhotos,
+          imageUrl: act.id === photoId ? cloudUrl : act.imageUrl,
+          thumbnailUrl: act.id === photoId ? thumbnailUrl : act.thumbnailUrl,
+        };
+      });
+
+      const updatedReport = {
+        ...rep,
+        activities: updatedActivities,
+        updatedAt: new Date().toISOString(),
+      };
+
+      updatedReports[targetDate] = updatedReport;
+
+      if (authUser) {
+        saveDayReportToFirestore(authUser.uid, updatedReport);
+      }
+
+      return {
+        ...prev,
+        reports: updatedReports,
+      };
+    });
+  };
+
+  // Drain queue on app start (after auth) and window 'online' event
+  useEffect(() => {
+    if (authUser) {
+      drainUploadQueue(handlePhotoSynced).catch(console.error);
+    }
+  }, [authUser]);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      drainUploadQueue(handlePhotoSynced).catch(console.error);
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, []);
+
+  const handleSavePhotoToTodayVault = async (photo: WorkActivityPhoto): Promise<boolean> => {
+    return await updateCurrentReport((rep) => {
       const existing = rep.activities || [];
       if (existing.length > 0) {
         const updated = existing.map((a, idx) =>
@@ -706,8 +796,6 @@ export default function App() {
   const completionPercentage =
     totalTasksCount > 0 ? Math.round((completedTasksCount / totalTasksCount) * 100) : 0;
 
-  const currentLanguage = appState.userProfile?.language || 'en';
-
   useEffect(() => {
     document.documentElement.lang = currentLanguage;
   }, [currentLanguage]);
@@ -748,6 +836,22 @@ export default function App() {
       {/* 2. Main Content Container */}
       <div className="flex-1 flex flex-col min-w-0 min-h-screen pb-20 md:pb-6">
         
+        {/* Visible warning banner for storage full or cloud save failure */}
+        {saveWarning && (
+          <div className="bg-amber-500 text-slate-950 px-4 py-3 font-bold text-xs flex items-center justify-between shadow-lg z-50 animate-fadeIn">
+            <div className="flex items-center gap-2">
+              <span className="text-base">⚠️</span>
+              <span>{saveWarning}</span>
+            </div>
+            <button
+              onClick={() => setSaveWarning(null)}
+              className="bg-slate-950/15 hover:bg-slate-950/25 px-2.5 py-1 rounded-lg text-xs font-black transition-colors cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* Header Bar */}
         <Header
           currentView={currentView}

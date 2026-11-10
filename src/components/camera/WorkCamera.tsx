@@ -242,7 +242,7 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
         employeeId: userProfile.employeeId || 'EMP-001',
         employeeName: userProfile.employeeName || 'ROTH DARO',
         imageUrl: photo.imageUrl,
-        thumbnailUrl: photo.thumbnailUrl || photo.imageUrl,
+        thumbnailUrl: photo.thumbnailUrl,
         workCategory: selectedCategory ? selectedCategory : null,
         category: selectedCategory || 'Other',
         activityTitle,
@@ -258,20 +258,28 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
       };
 
       // 5. Save to Application State & Firestore
+      let localSuccess = true;
       if (onSaveRecord) {
-        onSaveRecord(newRecord);
+        const res = await onSaveRecord(newRecord);
+        if (res === false) localSuccess = false;
       } else if (onSavePhotoToTodayVault) {
-        onSavePhotoToTodayVault(photo);
+        const res = await onSavePhotoToTodayVault(photo);
+        if (res === false) localSuccess = false;
       }
 
-      // 6. Reset capture state & show brief success toast
-      setPendingPhotoDataUrl(null);
-      setPendingCapturedAt('');
-      setSelectedCategory('');
-      setWorkDescription('');
+      // 6. Reset capture state & show brief success toast only if local save succeeded
+      if (localSuccess !== false) {
+        setPendingPhotoDataUrl(null);
+        setPendingCapturedAt('');
+        setSelectedCategory('');
+        setWorkDescription('');
 
-      setSaveSuccessNotice(t.savedWorkEvidenceSuccess);
-      setTimeout(() => setSaveSuccessNotice(null), 3000);
+        setSaveSuccessNotice(t.savedWorkEvidenceSuccess);
+        setTimeout(() => setSaveSuccessNotice(null), 3000);
+      } else {
+        setSaveSuccessNotice(t.storageFullWarning);
+        setTimeout(() => setSaveSuccessNotice(null), 4000);
+      }
     } catch (err) {
       console.error('Error saving work evidence record:', err);
     } finally {

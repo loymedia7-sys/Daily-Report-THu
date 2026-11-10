@@ -257,7 +257,6 @@ function generateDayTableHtml(report: DayReport, language: Language = 'en'): str
       <table style="
         width: 100%;
         border-collapse: collapse;
-        table-layout: fixed;
         border: 1px solid #000000;
         font-family: 'Battambang', 'Kantumruy Pro', 'Plus Jakarta Sans', system-ui, sans-serif;
       ">

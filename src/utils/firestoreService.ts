@@ -142,15 +142,26 @@ export function subscribeToTemplates(
 export async function saveDayReportToFirestore(
   userId: string, 
   report: DayReport
-): Promise<void> {
+): Promise<boolean> {
   try {
-    const reportDocRef = doc(db, 'users', userId, 'reports', report.date);
-    await setDoc(reportDocRef, {
+    const reportData = {
       ...report,
       lastUpdated: new Date().toISOString()
-    });
+    };
+    const serialized = JSON.stringify(reportData);
+    const sizeBytes = new TextEncoder().encode(serialized).length;
+    const ONE_MIB = 1024 * 1024; // 1 MiB limit in Firestore
+    if (sizeBytes > ONE_MIB) {
+      console.error(`[ERROR] DayReport payload size (${Math.round(sizeBytes / 1024)} KB) exceeds Firestore 1 MiB document limit (1,048,576 bytes)! Photos should be stored via Cloudinary URLs or IndexedDB offline queue.`);
+      return false;
+    }
+
+    const reportDocRef = doc(db, 'users', userId, 'reports', report.date);
+    await setDoc(reportDocRef, reportData);
+    return true;
   } catch (error) {
     console.error(`Error saving report for ${report.date} to Firestore:`, error);
+    return false;
   }
 }
 

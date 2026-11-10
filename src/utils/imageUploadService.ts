@@ -298,24 +298,22 @@ export async function processAndUploadWorkPhoto(
         uploadedAt: new Date().toISOString(),
         fileSize: uploadRes.bytes,
         syncStatus: 'synced',
-        localDataUrl: compressed.dataUrl,
       };
     } catch (err) {
       console.warn('Direct upload failed, keeping in offline queue:', err);
     }
   }
 
-  // Offline or upload error: return with local data URL
+  // Offline or upload error: return with empty imageUrl/thumbnailUrl and pending status, keeping blob in IndexedDB queue
   return {
     photoId,
-    imageUrl: compressed.dataUrl,
-    thumbnailUrl: compressed.dataUrl,
+    imageUrl: '',
+    thumbnailUrl: '',
     description: meta.description || '',
     capturedAt,
     uploadedAt: new Date().toISOString(),
     fileSize: compressed.sizeBytes,
     syncStatus: 'pending',
-    localDataUrl: compressed.dataUrl,
   };
 }
 
@@ -323,7 +321,7 @@ export async function processAndUploadWorkPhoto(
  * Background queue drainer: syncs any pending photos when online
  */
 export async function drainUploadQueue(
-  onSynced?: (photoId: string, cloudUrl: string, thumbnailUrl: string) => void
+  onSynced?: (photoId: string, cloudUrl: string, thumbnailUrl: string) => void | Promise<void>
 ): Promise<number> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) return 0;
   
@@ -334,15 +332,23 @@ export async function drainUploadQueue(
     if (item.status === 'uploading') continue;
     try {
       item.status = 'uploading';
+      await savePhotoToIndexedDBQueue(item);
+
       const uploadRes = await uploadWorkPhotoToCloudinary(item.blob);
+
+      if (onSynced) {
+        await Promise.resolve(onSynced(item.photoId, uploadRes.secureUrl, uploadRes.thumbnailUrl));
+      }
+
+      // Only remove a queue item after the report has been updated successfully
       await removeQueuedUpload(item.photoId);
       syncedCount++;
-      if (onSynced) {
-        onSynced(item.photoId, uploadRes.secureUrl, uploadRes.thumbnailUrl);
-      }
-    } catch {
+    } catch (err) {
       item.status = 'failed';
+      item.error = String(err);
       item.retryCount = (item.retryCount || 0) + 1;
+      // Persist status 'failed' and retryCount back to IndexedDB
+      await savePhotoToIndexedDBQueue(item);
     }
   }
 

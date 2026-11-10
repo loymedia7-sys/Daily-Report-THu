@@ -211,12 +211,12 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
           </div>
 
           {photos.length > 0 ? (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
-              {photos.map((photo) => (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {photos.map((photo, pIdx) => (
                 <div
                   key={photo.photoId}
                   onClick={() => setSelectedPhoto(photo)}
-                  className="relative group rounded-xl overflow-hidden border border-slate-200 bg-slate-100 cursor-pointer aspect-square shadow-xs"
+                  className="relative group rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 cursor-pointer aspect-[4/3] shadow-md"
                 >
                   <img
                     src={photo.thumbnailUrl || photo.localDataUrl || photo.imageUrl}
@@ -224,8 +224,12 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                     loading="lazy"
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2">
-                    <p className="text-[10px] text-white font-medium truncate">
+                  {/* Photo Index Badge #1, #2 */}
+                  <div className="absolute top-3 left-3 bg-black/85 text-white px-2.5 py-1 rounded-xl font-black text-xs font-mono border border-white/30 shadow-md">
+                    #{pIdx + 1}
+                  </div>
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
+                    <p className="text-xs text-white font-bold truncate">
                       {photo.description || 'Click to enlarge'}
                     </p>
                   </div>
