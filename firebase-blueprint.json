@@ -1,0 +1,64 @@
+{
+  "entities": {
+    "users": {
+      "title": "User Profiles",
+      "description": "User profiles and settings",
+      "type": "object",
+      "properties": {
+        "employeeName": { "type": "string" },
+        "department": { "type": "string" },
+        "supervisorName": { "type": "string" },
+        "offDays": { "type": "array", "items": { "type": "number" } },
+        "email": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "lastLogin": { "type": "string" }
+      },
+      "required": ["employeeName"]
+    },
+    "users/{userId}/reports": {
+      "title": "Daily Reports",
+      "description": "Daily schedule reports per user per date",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "dayOfWeek": { "type": "string" },
+        "isHoliday": { "type": "boolean" },
+        "holidayReason": { "type": "string" },
+        "tasks": { "type": "array" },
+        "activities": { "type": "array" },
+        "notes": { "type": "string" },
+        "lastUpdated": { "type": "string" }
+      },
+      "required": ["date"]
+    },
+    "users/{userId}/reports/{reportDate}/activities": {
+      "title": "Daily Work Activities",
+      "description": "Daily work activities with photo metadata",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "status": { "type": "string" },
+        "photos": { "type": "array" }
+      },
+      "required": ["title", "category"]
+    },
+    "users/{userId}/templates": {
+      "title": "Schedule Templates",
+      "description": "Schedule template slots for all days or specific days",
+      "type": "object",
+      "properties": {
+        "timeSlot": { "type": "string" },
+        "taskName": { "type": "string" },
+        "scheduleType": { "type": "string" },
+        "daysOfWeek": { "type": "array", "items": { "type": "number" } },
+        "applicableScope": { "type": "string" },
+        "specificDate": { "type": "string" }
+      },
+      "required": ["timeSlot", "taskName"]
+    }
+  }
+}

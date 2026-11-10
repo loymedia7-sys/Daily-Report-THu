@@ -1,0 +1,19 @@
+{
+  "short_name": "DailyReport",
+  "name": "Daily Report Schedule Tracker",
+  "description": "Automated daily schedule checklist and report generator with live sync, auto-holiday detection, and export.",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "scope": "/",
+  "background_color": "#0F172A",
+  "theme_color": "#4F46E5",
+  "display": "standalone",
+  "orientation": "portrait"
+}
