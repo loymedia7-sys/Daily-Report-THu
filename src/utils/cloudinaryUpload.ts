@@ -6,10 +6,10 @@
 
 // Default Cloudinary configuration
 export const DEFAULT_CLOUDINARY_CONFIG = {
-  cloudName: 'dismpss5e',
+  cloudName: 'xivrejrq',
   uploadPreset: 'REPORT',
-  apiKey: '335545523274868',
-  apiSecret: 'TMe5NO5FXq9H54J7O_XhBNex9AM',
+  apiKey: '986946139847955',
+  apiSecret: '1Uf5cp2V-gz-UIX5lbkTa1xAhoU',
 };
 
 /**
