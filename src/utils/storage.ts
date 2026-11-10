@@ -21,10 +21,10 @@ export const INITIAL_USER_PROFILE: UserProfile = {
   supervisorName: 'Operations Lead',
   companyName: 'Operations Enterprise',
   companyLogoUrl: '',
-  cloudinaryCloudName: 'dismpss5e',
+  cloudinaryCloudName: 'xivrejrq',
   cloudinaryUploadPreset: 'REPORT',
-  cloudinaryApiKey: '335545523274868',
-  cloudinaryApiSecret: 'TMe5NO5FXq9H54J7O_XhBNex9AM',
+  cloudinaryApiKey: '986946139847955',
+  cloudinaryApiSecret: '1Uf5cp2V-gz-UIX5lbkTa1xAhoU',
   offDays: [1], // Monday is Holiday
   autoSyncGoogleSheets: false,
   language: 'en',

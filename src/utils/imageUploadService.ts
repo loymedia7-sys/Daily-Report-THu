@@ -1,6 +1,6 @@
 import { WorkActivityPhoto } from '../types/workReport';
 
-export const DEFAULT_CLOUDINARY_CLOUD_NAME = 'dismpss5e';
+export const DEFAULT_CLOUDINARY_CLOUD_NAME = 'xivrejrq';
 export const DEFAULT_CLOUDINARY_UPLOAD_PRESET = 'REPORT';
 
 /**
