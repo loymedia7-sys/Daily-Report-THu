@@ -1,7 +1,8 @@
 import { WorkActivityPhoto } from '../types/workReport';
+import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET } from '../config/cloudinary';
 
-export const DEFAULT_CLOUDINARY_CLOUD_NAME = 'xivrejrq';
-export const DEFAULT_CLOUDINARY_UPLOAD_PRESET = 'REPORT';
+export const DEFAULT_CLOUDINARY_CLOUD_NAME = CLOUDINARY_CLOUD_NAME;
+export const DEFAULT_CLOUDINARY_UPLOAD_PRESET = CLOUDINARY_UPLOAD_PRESET;
 
 /**
  * Resizes and compresses an image (File or Blob or DataURL) on canvas
@@ -218,6 +219,7 @@ export async function uploadWorkPhotoToCloudinary(
 
   if (!response.ok) {
     const errorText = await response.text();
+    console.error("[Cloudinary]", response.status, errorText);
     throw new Error(`Cloudinary upload failed (${response.status}): ${errorText}`);
   }
 
@@ -298,9 +300,22 @@ export async function processAndUploadWorkPhoto(
         uploadedAt: new Date().toISOString(),
         fileSize: uploadRes.bytes,
         syncStatus: 'synced',
+        uploadStatus: 'uploaded',
       };
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Direct upload failed, keeping in offline queue:', err);
+      return {
+        photoId,
+        imageUrl: '',
+        thumbnailUrl: '',
+        description: meta.description || '',
+        capturedAt,
+        uploadedAt: new Date().toISOString(),
+        fileSize: compressed.sizeBytes,
+        syncStatus: 'pending',
+        uploadStatus: 'failed',
+        error: err?.message || String(err),
+      };
     }
   }
 
@@ -314,6 +329,7 @@ export async function processAndUploadWorkPhoto(
     uploadedAt: new Date().toISOString(),
     fileSize: compressed.sizeBytes,
     syncStatus: 'pending',
+    uploadStatus: 'queued',
   };
 }
 

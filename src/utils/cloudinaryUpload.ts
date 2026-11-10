@@ -1,27 +1,15 @@
 /**
  * Utility functions for uploading and processing company logos
- * with Cloudinary API integration (supporting signed uploads and unsigned presets)
- * and high-performance base64 fallback synced directly to Firestore.
+ * with Cloudinary unsigned preset uploads and high-performance base64 fallback.
  */
 
-// Default Cloudinary configuration
+import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET } from '../config/cloudinary';
+
+// Default Cloudinary configuration (unsigned only)
 export const DEFAULT_CLOUDINARY_CONFIG = {
-  cloudName: 'xivrejrq',
-  uploadPreset: 'REPORT',
-  apiKey: '986946139847955',
-  apiSecret: '1Uf5cp2V-gz-UIX5lbkTa1xAhoU',
+  cloudName: CLOUDINARY_CLOUD_NAME,
+  uploadPreset: CLOUDINARY_UPLOAD_PRESET,
 };
-
-/**
- * Computes SHA-1 hash in browser for Cloudinary API signature
- */
-async function computeSha1(str: string): Promise<string> {
-  const enc = new TextEncoder();
-  const data = enc.encode(str);
-  const hashBuffer = await crypto.subtle.digest('SHA-1', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-}
 
 /**
  * Resizes and compresses an image file on the client-side
@@ -81,94 +69,52 @@ export interface UploadResult {
 }
 
 /**
- * Uploads a logo image to Cloudinary or falls back to optimized Base64
+ * Uploads a logo image to Cloudinary using unsigned preset or falls back to optimized Base64
  */
 export async function uploadLogoImage(
   file: File,
   config?: {
     cloudName?: string;
     uploadPreset?: string;
-    apiKey?: string;
-    apiSecret?: string;
   }
 ): Promise<UploadResult> {
-  // Compress image first for speed & memory efficiency
   const compressedBase64 = await compressImage(file, 400, 400);
 
-  // Merge provided config with default credentials
-  const cloudName = (config?.cloudName?.trim() || DEFAULT_CLOUDINARY_CONFIG.cloudName).trim();
-  const uploadPreset = (config?.uploadPreset?.trim() || DEFAULT_CLOUDINARY_CONFIG.uploadPreset).trim();
-  const apiKey = (config?.apiKey?.trim() || DEFAULT_CLOUDINARY_CONFIG.apiKey).trim();
-  const apiSecret = (config?.apiSecret?.trim() || DEFAULT_CLOUDINARY_CONFIG.apiSecret).trim();
+  const cloudName = (config?.cloudName?.trim() || CLOUDINARY_CLOUD_NAME).trim();
+  const uploadPreset = (config?.uploadPreset?.trim() || CLOUDINARY_UPLOAD_PRESET).trim();
 
-  if (cloudName) {
-    // Attempt 1: Signed Upload (Most reliable with API Key & API Secret)
-    if (apiKey && apiSecret) {
-      try {
-        const timestamp = Math.round(Date.now() / 1000).toString();
-        // Standard Cloudinary parameter signing (alphabetical order)
-        const stringToSign = `timestamp=${timestamp}${apiSecret}`;
-        const signature = await computeSha1(stringToSign);
+  if (cloudName && uploadPreset) {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('upload_preset', uploadPreset);
 
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('api_key', apiKey);
-        formData.append('timestamp', timestamp);
-        formData.append('signature', signature);
-
-        const response = await fetch(
-          `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
-          {
-            method: 'POST',
-            body: formData,
-          }
-        );
-
-        if (response.ok) {
-          const data = await response.json();
-          if (data.secure_url) {
-            return {
-              url: data.secure_url,
-              source: 'cloudinary',
-            };
-          }
+      const response = await fetch(
+        `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+        {
+          method: 'POST',
+          body: formData,
         }
-      } catch {
-        // Fall through to next strategy
-      }
-    }
+      );
 
-    // Attempt 2: Unsigned Preset Upload
-    if (uploadPreset) {
-      try {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('upload_preset', uploadPreset);
-
-        const response = await fetch(
-          `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
-          {
-            method: 'POST',
-            body: formData,
-          }
-        );
-
-        if (response.ok) {
-          const data = await response.json();
-          if (data.secure_url) {
-            return {
-              url: data.secure_url,
-              source: 'cloudinary',
-            };
-          }
+      if (response.ok) {
+        const data = await response.json();
+        if (data.secure_url) {
+          return {
+            url: data.secure_url,
+            source: 'cloudinary',
+          };
         }
-      } catch {
-        // Fall through to next strategy
+      } else {
+        const errText = await response.text();
+        console.error('[Cloudinary Logo Upload]', response.status, errText);
       }
+    } catch (err) {
+      console.error('[Cloudinary Logo Upload Exception]', err);
     }
   }
 
-  // Attempt 3: High-performance optimized Base64 fallback (saved to profile & synced to Firestore)
+  // Fallback to Base64
   return {
     url: compressedBase64,
     source: 'local_storage',

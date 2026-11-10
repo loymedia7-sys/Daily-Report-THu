@@ -11,6 +11,8 @@ import {
 import { db } from '../lib/firebase';
 import { AppState, DayReport, DefaultTimeSlotTemplate, UserProfile } from '../types';
 
+import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET } from '../config/cloudinary';
+
 /**
  * Delete all report documents from Firestore for a specific user
  */
@@ -57,8 +59,10 @@ export async function resetAllFirestoreUserData(
 export async function saveUserProfileToFirestore(userId: string, profile: UserProfile): Promise<void> {
   try {
     const userDocRef = doc(db, 'users', userId);
+    // Ensure no sensitive or removed fields are written
+    const { cloudinaryApiKey, cloudinaryApiSecret, ...cleanProfile } = profile as any;
     await setDoc(userDocRef, {
-      ...profile,
+      ...cleanProfile,
       lastUpdated: new Date().toISOString()
     }, { merge: true });
   } catch (error) {
@@ -83,10 +87,8 @@ export function subscribeToUserProfile(
         supervisorName: data.supervisorName || 'Operations Lead',
         companyName: data.companyName || '',
         companyLogoUrl: data.companyLogoUrl || '',
-        cloudinaryCloudName: data.cloudinaryCloudName || 'dismpss5e',
-        cloudinaryUploadPreset: data.cloudinaryUploadPreset || 'REPORT',
-        cloudinaryApiKey: data.cloudinaryApiKey || '335545523274868',
-        cloudinaryApiSecret: data.cloudinaryApiSecret || 'TMe5NO5FXq9H54J7O_XhBNex9AM',
+        cloudinaryCloudName: data.cloudinaryCloudName || CLOUDINARY_CLOUD_NAME,
+        cloudinaryUploadPreset: data.cloudinaryUploadPreset || CLOUDINARY_UPLOAD_PRESET,
         offDays: data.offDays || [1],
         googleSheetWebAppUrl: data.googleSheetWebAppUrl || '',
         autoSyncGoogleSheets: data.autoSyncGoogleSheets || false,

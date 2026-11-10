@@ -15,16 +15,16 @@ export const INITIAL_DEFAULT_SCHEDULE: DefaultTimeSlotTemplate[] = [
   { id: '9', timeSlot: '16:00 - 17:00', taskName: 'Post page', scheduleType: 'Schedule' },
 ];
 
+import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET } from '../config/cloudinary';
+
 export const INITIAL_USER_PROFILE: UserProfile = {
   employeeName: 'ROTH DARO',
   department: 'Operations & Platform Management',
   supervisorName: 'Operations Lead',
   companyName: 'Operations Enterprise',
   companyLogoUrl: '',
-  cloudinaryCloudName: 'xivrejrq',
-  cloudinaryUploadPreset: 'REPORT',
-  cloudinaryApiKey: '986946139847955',
-  cloudinaryApiSecret: '1Uf5cp2V-gz-UIX5lbkTa1xAhoU',
+  cloudinaryCloudName: CLOUDINARY_CLOUD_NAME,
+  cloudinaryUploadPreset: CLOUDINARY_UPLOAD_PRESET,
   offDays: [1], // Monday is Holiday
   autoSyncGoogleSheets: false,
   language: 'en',
@@ -157,3 +157,33 @@ export function saveAppState(state: AppState): boolean {
     return false;
   }
 }
+
+/**
+ * Strips any data:image strings from imageUrl, thumbnailUrl, and localDataUrl without mutating input object
+ */
+export function stripInlineImages<T>(obj: T): T {
+  if (!obj || typeof obj !== 'object') return obj;
+  const clone = JSON.parse(JSON.stringify(obj));
+
+  function clean(item: any) {
+    if (!item || typeof item !== 'object') return;
+    for (const key of Object.keys(item)) {
+      const val = item[key];
+      if (typeof val === 'string' && val.startsWith('data:')) {
+        if (key === 'imageUrl' || key === 'thumbnailUrl' || key === 'localDataUrl') {
+          item[key] = '';
+        }
+      } else if (typeof val === 'object') {
+        clean(val);
+      }
+    }
+  }
+
+  clean(clone);
+  return clone;
+}
+
+export function stripReportImages(report: DayReport): DayReport {
+  return stripInlineImages(report);
+}
+

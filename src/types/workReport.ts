@@ -124,6 +124,8 @@ export interface WorkActivityPhoto {
   uploadedAt: string;
   fileSize?: number;
   syncStatus?: 'synced' | 'pending' | 'failed';
+  uploadStatus?: 'uploaded' | 'queued' | 'failed';
+  error?: string;
   localDataUrl?: string; // Cache for offline viewing
 }
 

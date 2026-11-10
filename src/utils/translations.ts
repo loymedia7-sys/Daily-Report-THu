@@ -227,6 +227,14 @@ export interface Translations {
   noMatchingLogs: string;
   storageFullWarning: string;
   cloudSaveFailedWarning: string;
+  waitingToUpload: string;
+  uploadFailed: string;
+  loading: string;
+  stepCompressing: string;
+  stepSavingLocal: string;
+  stepUploadingCloud: string;
+  stepLinkedReport: string;
+  stepSavedOffline: string;
 
   // Settings Modal
   settingsTitle: string;
@@ -580,6 +588,14 @@ export const TRANSLATIONS: Record<Language, Translations> = {
     noMatchingLogs: 'No matching log entries found.',
     storageFullWarning: 'Storage full or save failed, photo/data not saved locally.',
     cloudSaveFailedWarning: 'Cloud sync failed, report could not be saved to cloud.',
+    waitingToUpload: 'Waiting to upload',
+    uploadFailed: 'Upload failed',
+    loading: 'Loading...',
+    stepCompressing: 'Compressing...',
+    stepSavingLocal: 'Saving locally...',
+    stepUploadingCloud: 'Uploading to cloud...',
+    stepLinkedReport: 'Linked to report',
+    stepSavedOffline: 'Saved offline – will upload later',
 
     // Settings Modal
     settingsTitle: 'Settings & Profile',
@@ -933,6 +949,14 @@ export const TRANSLATIONS: Record<Language, Translations> = {
     noMatchingLogs: 'មិនមានទិន្នន័យត្រូវគ្នានឹងការស្វែងរកទេ។',
     storageFullWarning: 'អង្គផ្ទុកទិន្នន័យเต็ม ឬការរក្សាទុកបរាជ័យ ទិន្នន័យមិនអាចរក្សាទុកក្នុងម៉ាស៊ីនបានទេ។',
     cloudSaveFailedWarning: 'ការបញ្ជូនទិន្នន័យទៅពពក (Cloud) មិនបានសម្រេចទេ។',
+    waitingToUpload: 'រង់ចាំផ្ទុកឡើង',
+    uploadFailed: 'ផ្ទុកឡើងបរាជ័យ',
+    loading: 'កំពុងផ្ទុក...',
+    stepCompressing: 'កំពុងបង្ហាប់រូបភាព...',
+    stepSavingLocal: 'កំពុងរក្សាទុកក្នុងម៉ាស៊ីន...',
+    stepUploadingCloud: 'កំពុងបញ្ជូនទៅពពក (Cloud)...',
+    stepLinkedReport: 'បានតភ្ជាប់ទៅរបាយការណ៍',
+    stepSavedOffline: 'បានរក្សាទុកក្រៅបណ្ដាញ - នឹងផ្ទុកឡើងពេលក្រោយ',
 
     // Settings Modal
     settingsTitle: 'ការកំណត់ និងព័ត៌មានបុគ្គលិក',

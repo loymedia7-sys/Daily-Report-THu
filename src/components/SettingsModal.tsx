@@ -81,8 +81,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       const result = await uploadLogoImage(file, {
         cloudName: profile.cloudinaryCloudName,
         uploadPreset: profile.cloudinaryUploadPreset,
-        apiKey: profile.cloudinaryApiKey,
-        apiSecret: profile.cloudinaryApiSecret,
       });
 
       setProfile((prev) => ({
