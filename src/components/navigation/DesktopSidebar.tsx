@@ -17,6 +17,7 @@ import {
 import { MainNavView } from '../../types/workReport';
 import { UserProfile, AuthUser, Language } from '../../types';
 import { TRANSLATIONS } from '../../utils/translations';
+import { safeImgSrc } from '../../utils/dateUtils';
 
 interface DesktopSidebarProps {
   currentView: MainNavView;
@@ -96,9 +97,9 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
     <aside className="hidden md:flex flex-col w-64 bg-slate-900 text-slate-200 border-r border-slate-800 shrink-0 select-none min-h-screen sticky top-0 h-screen overflow-y-auto">
       {/* Brand Header */}
       <div className="p-5 border-b border-slate-800/80 flex items-center gap-3">
-        {userProfile.companyLogoUrl ? (
+        {safeImgSrc(userProfile.companyLogoUrl) ? (
           <img
-            src={userProfile.companyLogoUrl}
+            src={safeImgSrc(userProfile.companyLogoUrl)}
             alt={companyName}
             className="w-10 h-10 rounded-xl object-contain bg-white/10 p-1 border border-slate-700 shadow-sm"
           />

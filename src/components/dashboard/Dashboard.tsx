@@ -21,6 +21,7 @@ import { DayReport, UserProfile, Language, AuthUser, ScheduleTask } from '../../
 import { WorkActivity } from '../../types/workReport';
 import { TRANSLATIONS, formatKhmerDate } from '../../utils/translations';
 import { calculateActivityStats, countEvidencePhotosInReport } from '../../utils/workEvidenceService';
+import { safeImgSrc } from '../../utils/dateUtils';
 
 interface DashboardProps {
   report: DayReport;
@@ -83,9 +84,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
           {/* Employee & Company Info */}
           <div className="flex items-center gap-4">
-            {userProfile.companyLogoUrl ? (
+            {safeImgSrc(userProfile.companyLogoUrl) ? (
               <img
-                src={userProfile.companyLogoUrl}
+                src={safeImgSrc(userProfile.companyLogoUrl)}
                 alt={companyName}
                 className="w-16 h-16 rounded-2xl object-contain bg-blue-50 p-1.5 border border-blue-200 shadow-md"
               />

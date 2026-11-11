@@ -91,6 +91,7 @@ export interface DefaultTimeSlotTemplate {
 export type Language = 'en' | 'km';
 
 export interface UserProfile {
+  employeeId?: string;
   employeeName: string;
   department: string;
   supervisorName: string;

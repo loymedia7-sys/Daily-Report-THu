@@ -11,6 +11,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { UserProfile } from '../types';
+import { safeImgSrc } from '../utils/dateUtils';
 
 interface InstallPromptModalProps {
   isOpen: boolean;
@@ -40,9 +41,9 @@ export const InstallPromptModal: React.FC<InstallPromptModalProps> = ({
         {/* Header */}
         <div className="p-5 bg-gradient-to-r from-indigo-900 via-slate-900 to-indigo-950 text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {userProfile.companyLogoUrl ? (
+            {safeImgSrc(userProfile.companyLogoUrl) ? (
               <img
-                src={userProfile.companyLogoUrl}
+                src={safeImgSrc(userProfile.companyLogoUrl)}
                 alt="Logo"
                 className="w-9 h-9 rounded-xl object-cover bg-white p-0.5 border border-indigo-300/40"
               />
@@ -87,9 +88,9 @@ export const InstallPromptModal: React.FC<InstallPromptModalProps> = ({
               {/* Feature Highlights */}
               <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-center gap-3.5">
                 <div className="w-14 h-14 rounded-2xl bg-white shadow-md border border-slate-200/90 flex items-center justify-center p-1.5 shrink-0 overflow-hidden">
-                  {userProfile.companyLogoUrl ? (
+                  {safeImgSrc(userProfile.companyLogoUrl) ? (
                     <img
-                      src={userProfile.companyLogoUrl}
+                      src={safeImgSrc(userProfile.companyLogoUrl)}
                       alt="Company App Icon"
                       className="w-full h-full object-contain"
                     />

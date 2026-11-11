@@ -14,7 +14,7 @@ import {
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
-import { WorkActivity, WorkActivityPhoto, WORK_CATEGORIES } from '../../types/workReport';
+import { WorkActivity, WORK_CATEGORIES } from '../../types/workReport';
 import { DayReport, UserProfile, Language } from '../../types';
 import { TRANSLATIONS } from '../../utils/translations';
 import { ActivityCard } from './ActivityCard';
@@ -26,11 +26,11 @@ interface DailyReportPageProps {
   selectedDate: string;
   setSelectedDate: (date: string) => void;
   userProfile: UserProfile;
-  onSaveActivity: (activity: WorkActivity) => void;
-  onDeleteActivity: (activityId: string) => void;
+  onSaveActivity: (activity: WorkActivity) => boolean | void | Promise<boolean | void>;
+  onDeleteActivity: (activityId: string) => boolean | void | Promise<boolean | void>;
   onAddPhotosToActivity: (activityId: string) => void;
-  onUpdatePhotoDescription: (photoId: string, description: string) => void;
-  onDeletePhoto: (photoId: string) => void;
+  onUpdatePhotoDescription: (photoId: string, description: string) => boolean | void | Promise<boolean | void>;
+  onDeletePhoto: (photoId: string) => boolean | void | Promise<boolean | void>;
   onOpenExportModal: () => void;
   onNavigateToCamera: () => void;
   language: Language;
@@ -101,19 +101,21 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({
     setSelectedDate(`${yr}-${mo}-${da}`);
   };
 
-  const handleUpdateActivityDescription = (activityId: string, description: string) => {
+  const handleUpdateActivityDescription = async (activityId: string, description: string): Promise<boolean> => {
     const target = activities.find((a) => a.id === activityId);
-    if (target) {
-      const cleanDesc = description.trim();
-      const firstLine = cleanDesc.split('\n')[0].trim();
-      const computedTitle = firstLine ? (firstLine.length > 80 ? firstLine.slice(0, 77) + '...' : firstLine) : target.category;
+    if (!target) return false;
+    const cleanDesc = description.trim();
+    const firstLine = cleanDesc.split('\n')[0].trim();
+    const computedTitle = firstLine ? (firstLine.length > 80 ? firstLine.slice(0, 77) + '...' : firstLine) : target.category;
+    const res = await Promise.resolve(
       onSaveActivity({
         ...target,
         title: computedTitle,
         description: cleanDesc,
         updatedAt: new Date().toISOString(),
-      });
-    }
+      })
+    );
+    return res !== false;
   };
 
   return (

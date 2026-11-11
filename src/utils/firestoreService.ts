@@ -5,13 +5,12 @@ import {
   getDocs,
   deleteDoc,
   onSnapshot, 
-  collection, 
-  updateDoc 
+  collection
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { AppState, DayReport, DefaultTimeSlotTemplate, UserProfile } from '../types';
 
-import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET } from '../config/cloudinary';
+import { normalizeCloudinaryConfig } from '../config/cloudinary';
 
 /**
  * Delete all report documents from Firestore for a specific user
@@ -59,8 +58,24 @@ export async function resetAllFirestoreUserData(
 export async function saveUserProfileToFirestore(userId: string, profile: UserProfile): Promise<void> {
   try {
     const userDocRef = doc(db, 'users', userId);
-    // Ensure no sensitive or removed fields are written
-    const { cloudinaryApiKey, cloudinaryApiSecret, ...cleanProfile } = profile as any;
+    const normalizedCloudinary = normalizeCloudinaryConfig(
+      profile.cloudinaryCloudName,
+      profile.cloudinaryUploadPreset
+    );
+    const cleanProfile: UserProfile = {
+      employeeId: profile.employeeId || 'EMP-001',
+      employeeName: profile.employeeName,
+      department: profile.department,
+      supervisorName: profile.supervisorName,
+      companyName: profile.companyName || '',
+      companyLogoUrl: profile.companyLogoUrl || '',
+      cloudinaryCloudName: normalizedCloudinary.cloudName,
+      cloudinaryUploadPreset: normalizedCloudinary.uploadPreset,
+      offDays: profile.offDays,
+      googleSheetWebAppUrl: profile.googleSheetWebAppUrl || '',
+      autoSyncGoogleSheets: profile.autoSyncGoogleSheets,
+      language: profile.language || 'en',
+    };
     await setDoc(userDocRef, {
       ...cleanProfile,
       lastUpdated: new Date().toISOString()
@@ -81,14 +96,19 @@ export function subscribeToUserProfile(
   return onSnapshot(userDocRef, (snapshot) => {
     if (snapshot.exists()) {
       const data = snapshot.data();
+      const normalizedCloudinary = normalizeCloudinaryConfig(
+        data.cloudinaryCloudName,
+        data.cloudinaryUploadPreset
+      );
       onUpdate({
+        employeeId: data.employeeId || 'EMP-001',
         employeeName: data.employeeName || 'ROTH DARO',
         department: data.department || 'Operations',
         supervisorName: data.supervisorName || 'Operations Lead',
         companyName: data.companyName || '',
         companyLogoUrl: data.companyLogoUrl || '',
-        cloudinaryCloudName: data.cloudinaryCloudName || CLOUDINARY_CLOUD_NAME,
-        cloudinaryUploadPreset: data.cloudinaryUploadPreset || CLOUDINARY_UPLOAD_PRESET,
+        cloudinaryCloudName: normalizedCloudinary.cloudName,
+        cloudinaryUploadPreset: normalizedCloudinary.uploadPreset,
         offDays: data.offDays || [1],
         googleSheetWebAppUrl: data.googleSheetWebAppUrl || '',
         autoSyncGoogleSheets: data.autoSyncGoogleSheets || false,

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { UserProfile, AuthUser, Language } from '../types';
 import { TRANSLATIONS } from '../utils/translations';
+import { safeImgSrc } from '../utils/dateUtils';
 
 interface HeaderProps {
   userProfile: UserProfile;
@@ -56,9 +57,9 @@ export const Header: React.FC<HeaderProps> = ({
           
           {/* Left: App Identity / Logo & Company Name */}
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-            {userProfile.companyLogoUrl ? (
+            {safeImgSrc(userProfile.companyLogoUrl) ? (
               <img
-                src={userProfile.companyLogoUrl}
+                src={safeImgSrc(userProfile.companyLogoUrl)}
                 alt="Logo"
                 className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl object-cover shadow-2xs border border-slate-200 cursor-pointer shrink-0"
                 onClick={onOpenSettingsModal}
@@ -142,9 +143,9 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Google Authentication Section */}
             {authUser ? (
               <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200/80 p-1 pr-2 rounded-xl">
-                {authUser.photoURL ? (
+                {safeImgSrc(authUser.photoURL) ? (
                   <img
-                    src={authUser.photoURL}
+                    src={safeImgSrc(authUser.photoURL)}
                     alt={authUser.displayName || 'Google Account'}
                     className="w-6 h-6 rounded-lg object-cover border border-emerald-300"
                     referrerPolicy="no-referrer"
@@ -324,9 +325,9 @@ export const Header: React.FC<HeaderProps> = ({
             {authUser ? (
               <div className="flex items-center justify-between p-2 rounded-xl bg-emerald-50 border border-emerald-200">
                 <div className="flex items-center gap-2 min-w-0">
-                  {authUser.photoURL ? (
+                  {safeImgSrc(authUser.photoURL) ? (
                     <img
-                      src={authUser.photoURL}
+                      src={safeImgSrc(authUser.photoURL)}
                       alt="Profile"
                       className="w-6 h-6 rounded-md object-cover"
                       referrerPolicy="no-referrer"

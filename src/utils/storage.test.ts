@@ -91,4 +91,28 @@ describe('storage utility functions', () => {
     const cleaned = stripReportImages(report);
     expect(cleaned.activities?.[0].imageUrl).toBe('');
   });
+
+  it('INITIAL_USER_PROFILE includes employeeId and Cloudinary xivrejrq / daily-report defaults', async () => {
+    const { INITIAL_USER_PROFILE } = await import('./storage');
+    expect(INITIAL_USER_PROFILE.employeeId).toBe('EMP-001');
+    expect(INITIAL_USER_PROFILE.cloudinaryCloudName).toBe('xivrejrq');
+    expect(INITIAL_USER_PROFILE.cloudinaryUploadPreset).toBe('daily-report');
+  });
+
+  it('normalizeCloudinaryConfig migrates legacy dismpss5e and REPORT to xivrejrq and daily-report', async () => {
+    const { normalizeCloudinaryConfig } = await import('../config/cloudinary');
+    expect(normalizeCloudinaryConfig('dismpss5e', 'REPORT')).toEqual({
+      cloudName: 'xivrejrq',
+      uploadPreset: 'daily-report',
+    });
+    expect(normalizeCloudinaryConfig('', '')).toEqual({
+      cloudName: 'xivrejrq',
+      uploadPreset: 'daily-report',
+    });
+    expect(normalizeCloudinaryConfig('xivrejrq', 'daily-report')).toEqual({
+      cloudName: 'xivrejrq',
+      uploadPreset: 'daily-report',
+    });
+  });
 });
+

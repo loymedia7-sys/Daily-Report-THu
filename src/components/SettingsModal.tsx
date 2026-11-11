@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { UserProfile, AppState, Language } from '../types';
 import { APPS_SCRIPT_SNIPPET } from '../utils/googleSheetsSync';
-import { DAY_NAMES } from '../utils/dateUtils';
+import { DAY_NAMES, safeImgSrc } from '../utils/dateUtils';
 import { uploadLogoImage } from '../utils/cloudinaryUpload';
 import { updatePwaManifestAndIcons } from '../utils/pwaIconUpdater';
 import { TRANSLATIONS } from '../utils/translations';
@@ -288,11 +288,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <label className="block text-xs font-bold text-slate-700 mb-1">{t.companyLogoLabel}</label>
                 
                 <div className="flex items-center gap-3">
-                  {profile.companyLogoUrl ? (
+                  {safeImgSrc(profile.companyLogoUrl) ? (
                     <div className="relative group">
                       <div className="w-14 h-14 rounded-2xl bg-white border-2 border-indigo-300 p-1 flex items-center justify-center overflow-hidden shadow-2xs">
                         <img
-                          src={profile.companyLogoUrl}
+                          src={safeImgSrc(profile.companyLogoUrl)}
                           alt="Company Logo Preview"
                           className="w-full h-full object-contain"
                           referrerPolicy="no-referrer"
@@ -357,10 +357,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-[11px] space-y-1">
                     <p className="font-bold flex items-center gap-1.5">
                       <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                      <span>Cloudinary Setup Requirement ("Upload preset not found"):</span>
+                      <span>Cloudinary Setup Requirement:</span>
                     </p>
                     <p>
-                      To upload photos, you must create an <strong>Unsigned</strong> upload preset named <strong>REPORT</strong> in your Cloudinary console ({profile.cloudinaryCloudName || 'dismpss5e'} → Settings → Upload → Upload presets → Add upload preset → Signing Mode: Unsigned).
+                      Using cloud <strong>xivrejrq</strong> with unsigned preset <strong>daily-report</strong>. Ensure your Cloudinary upload preset is set to Unsigned.
                     </p>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -370,7 +370,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         type="text"
                         value={profile.cloudinaryCloudName || ''}
                         onChange={(e) => setProfile({ ...profile, cloudinaryCloudName: e.target.value })}
-                        placeholder="dismpss5e"
+                        placeholder="xivrejrq"
                         className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       />
                     </div>
@@ -380,7 +380,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         type="text"
                         value={profile.cloudinaryUploadPreset || ''}
                         onChange={(e) => setProfile({ ...profile, cloudinaryUploadPreset: e.target.value })}
-                        placeholder="REPORT"
+                        placeholder="daily-report"
                         className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       />
                     </div>

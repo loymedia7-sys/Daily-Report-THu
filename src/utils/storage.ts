@@ -15,9 +15,10 @@ export const INITIAL_DEFAULT_SCHEDULE: DefaultTimeSlotTemplate[] = [
   { id: '9', timeSlot: '16:00 - 17:00', taskName: 'Post page', scheduleType: 'Schedule' },
 ];
 
-import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET } from '../config/cloudinary';
+import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET, normalizeCloudinaryConfig } from '../config/cloudinary';
 
 export const INITIAL_USER_PROFILE: UserProfile = {
+  employeeId: 'EMP-001',
   employeeName: 'ROTH DARO',
   department: 'Operations & Platform Management',
   supervisorName: 'Operations Lead',
@@ -110,8 +111,19 @@ export function loadAppState(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw);
+      const parsed = JSON.parse(raw) as AppState;
       if (parsed && parsed.userProfile && parsed.defaultSchedule && parsed.reports) {
+        const normalizedCloudinary = normalizeCloudinaryConfig(
+          parsed.userProfile.cloudinaryCloudName,
+          parsed.userProfile.cloudinaryUploadPreset
+        );
+        parsed.userProfile = {
+          ...INITIAL_USER_PROFILE,
+          ...parsed.userProfile,
+          employeeId: parsed.userProfile.employeeId || INITIAL_USER_PROFILE.employeeId,
+          cloudinaryCloudName: normalizedCloudinary.cloudName,
+          cloudinaryUploadPreset: normalizedCloudinary.uploadPreset,
+        };
         return parsed;
       }
     }
@@ -163,15 +175,20 @@ export function saveAppState(state: AppState): boolean {
  */
 export function stripInlineImages<T>(obj: T): T {
   if (!obj || typeof obj !== 'object') return obj;
-  const clone = JSON.parse(JSON.stringify(obj));
+  const clone = JSON.parse(JSON.stringify(obj)) as T;
 
-  function clean(item: any) {
+  function clean(item: unknown) {
     if (!item || typeof item !== 'object') return;
-    for (const key of Object.keys(item)) {
-      const val = item[key];
+    if (Array.isArray(item)) {
+      for (const el of item) clean(el);
+      return;
+    }
+    const record = item as Record<string, unknown>;
+    for (const key of Object.keys(record)) {
+      const val = record[key];
       if (typeof val === 'string' && val.startsWith('data:')) {
         if (key === 'imageUrl' || key === 'thumbnailUrl' || key === 'localDataUrl') {
-          item[key] = '';
+          record[key] = '';
         }
       } else if (typeof val === 'object') {
         clean(val);

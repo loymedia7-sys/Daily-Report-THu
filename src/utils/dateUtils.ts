@@ -561,3 +561,14 @@ export function calculateSessionMinutes(checkIn: string, checkOut: string): numb
   return Math.max(0, outMin - inMin);
 }
 
+/**
+ * Returns a valid non-empty image source or undefined to prevent React "empty string src" warnings.
+ */
+export function safeImgSrc(url?: string | null): string | undefined {
+  if (!url || typeof url !== 'string' || url.trim() === '') {
+    return undefined;
+  }
+  return url;
+}
+
+

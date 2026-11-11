@@ -16,17 +16,18 @@ import { WorkActivity, WorkActivityPhoto, WORK_CATEGORIES, ActivityStatus } from
 import { Language } from '../../types';
 import { TRANSLATIONS } from '../../utils/translations';
 import { PhotoPreviewModal } from '../camera/PhotoPreviewModal';
+import { PhotoImage } from '../PhotoImage';
 
 interface ActivityCardProps {
   activity: WorkActivity;
   index: number;
   onEdit: (activity: WorkActivity) => void;
-  onDelete: (activityId: string) => void;
+  onDelete: (activityId: string) => boolean | void | Promise<boolean | void>;
   onAddPhotos: (activityId: string) => void;
-  onUpdatePhotoDescription: (photoId: string, description: string) => void;
-  onDeletePhoto: (photoId: string) => void;
-  onUpdateActivityDescription?: (activityId: string, description: string) => void;
-  onUpdateActivityStatus?: (activityId: string, status: ActivityStatus) => void;
+  onUpdatePhotoDescription: (photoId: string, description: string) => boolean | void | Promise<boolean | void>;
+  onDeletePhoto: (photoId: string) => boolean | void | Promise<boolean | void>;
+  onUpdateActivityDescription?: (activityId: string, description: string) => boolean | void | Promise<boolean | void>;
+  onUpdateActivityStatus?: (activityId: string, status: ActivityStatus) => boolean | void | Promise<boolean | void>;
   language: Language;
 }
 
@@ -53,11 +54,13 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
     setDescText(activity.description || '');
   }, [activity.description]);
 
-  const handleDescBlur = () => {
+  const handleDescBlur = async () => {
     if (descText !== activity.description && onUpdateActivityDescription) {
-      onUpdateActivityDescription(activity.id, descText);
-      setIsSavedRecently(true);
-      setTimeout(() => setIsSavedRecently(false), 2000);
+      const res = await Promise.resolve(onUpdateActivityDescription(activity.id, descText));
+      if (res !== false) {
+        setIsSavedRecently(true);
+        setTimeout(() => setIsSavedRecently(false), 2000);
+      }
     }
   };
 
@@ -70,7 +73,7 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
     : (language === 'km' ? 'មិនបានជ្រើសរើស' : 'Not Selected');
 
   // Status badge config
-  const statusConfig: Record<ActivityStatus, { label: string; bg: string; icon: any }> = {
+  const statusConfig: Record<ActivityStatus, { label: string; bg: string; icon: React.ComponentType<{ size?: number }> }> = {
     completed: {
       label: t.statusCompleted,
       bg: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -218,11 +221,16 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
                   onClick={() => setSelectedPhoto(photo)}
                   className="relative group rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 cursor-pointer aspect-[4/3] shadow-md"
                 >
-                  <img
-                    src={photo.thumbnailUrl || photo.localDataUrl || photo.imageUrl}
+                  <PhotoImage
+                    photoId={photo.photoId}
+                    imageUrl={photo.imageUrl}
+                    thumbnailUrl={photo.thumbnailUrl}
+                    localDataUrl={photo.localDataUrl}
+                    syncStatus={photo.syncStatus}
+                    uploadStatus={photo.uploadStatus}
                     alt={photo.description || 'Evidence'}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                    loading="lazy"
+                    lang={language}
                   />
                   {/* Photo Index Badge #1, #2 */}
                   <div className="absolute top-3 left-3 bg-black/85 text-white px-2.5 py-1 rounded-xl font-black text-xs font-mono border border-white/30 shadow-md">

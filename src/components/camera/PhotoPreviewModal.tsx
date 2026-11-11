@@ -1,15 +1,17 @@
-import React, { useState } from 'react';
-import { X, Trash2, Edit3, Check, Calendar, Clock, HardDrive, Download } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Trash2, Edit3, Check, Clock, HardDrive } from 'lucide-react';
 import { WorkActivityPhoto } from '../../types/workReport';
 import { Language } from '../../types';
 import { TRANSLATIONS } from '../../utils/translations';
+import { safeImgSrc } from '../../utils/dateUtils';
+import { getCachedPhotoDataUrl } from '../../utils/imageUploadService';
 
 interface PhotoPreviewModalProps {
   photo: WorkActivityPhoto | null;
   isOpen: boolean;
   onClose: () => void;
-  onUpdateDescription: (photoId: string, description: string) => void;
-  onDeletePhoto: (photoId: string) => void;
+  onUpdateDescription: (photoId: string, description: string) => boolean | void | Promise<boolean | void>;
+  onDeletePhoto: (photoId: string) => boolean | void | Promise<boolean | void>;
   language: Language;
 }
 
@@ -21,15 +23,44 @@ export const PhotoPreviewModal: React.FC<PhotoPreviewModalProps> = ({
   onDeletePhoto,
   language,
 }) => {
-  if (!isOpen || !photo) return null;
-
   const t = TRANSLATIONS[language] || TRANSLATIONS.en;
   const [isEditingCaption, setIsEditingCaption] = useState(false);
-  const [captionText, setCaptionText] = useState(photo.description || '');
+  const [captionText, setCaptionText] = useState(photo?.description || '');
+  const [cachedDataUrl, setCachedDataUrl] = useState<string | null>(null);
 
-  const handleSaveCaption = () => {
-    onUpdateDescription(photo.photoId, captionText);
+  useEffect(() => {
+    setCaptionText(photo?.description || '');
     setIsEditingCaption(false);
+  }, [photo, isOpen]);
+
+  useEffect(() => {
+    let active = true;
+    const directSrc = safeImgSrc(photo?.localDataUrl || photo?.imageUrl);
+    if (!isOpen || !photo || directSrc) {
+      setCachedDataUrl(null);
+      return;
+    }
+
+    if (photo.photoId) {
+      getCachedPhotoDataUrl(photo.photoId).then((url) => {
+        if (active) {
+          setCachedDataUrl(url);
+        }
+      });
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [isOpen, photo]);
+
+  if (!isOpen || !photo) return null;
+
+  const handleSaveCaption = async () => {
+    const res = await Promise.resolve(onUpdateDescription(photo.photoId, captionText));
+    if (res !== false) {
+      setIsEditingCaption(false);
+    }
   };
 
   const formattedTime = new Date(photo.capturedAt).toLocaleString(
@@ -43,6 +74,8 @@ export const PhotoPreviewModal: React.FC<PhotoPreviewModalProps> = ({
   const formattedKb = photo.fileSize
     ? `${Math.round(photo.fileSize / 1024)} KB`
     : 'Optimized';
+
+  const previewSrc = safeImgSrc(photo.localDataUrl || photo.imageUrl || cachedDataUrl);
 
   return (
     <div
@@ -76,11 +109,15 @@ export const PhotoPreviewModal: React.FC<PhotoPreviewModalProps> = ({
 
         {/* Image Body */}
         <div className="flex-1 overflow-auto bg-black flex items-center justify-center min-h-[260px] p-2">
-          <img
-            src={photo.localDataUrl || photo.imageUrl}
-            alt={photo.description || 'Work Evidence'}
-            className="max-h-[58vh] max-w-full object-contain rounded-lg"
-          />
+          {previewSrc ? (
+            <img
+              src={previewSrc}
+              alt={photo.description || 'Work Evidence'}
+              className="max-h-[58vh] max-w-full object-contain rounded-lg"
+            />
+          ) : (
+            <div className="text-slate-400 text-xs">No image preview available</div>
+          )}
         </div>
 
         {/* Footer / Caption Editor */}

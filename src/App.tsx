@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   AppState,
   DayReport,
@@ -567,10 +567,24 @@ export default function App() {
   };
 
   // Import Tasks
-  const handleImportTasks = (importedTasks: ScheduleTask[]) => {
+  const handleImportTasks = (importedTasks: ScheduleTask[], mode: 'replace' | 'append' | 'template' = 'append') => {
+    if (mode === 'template') {
+      const newTemplates: DefaultTimeSlotTemplate[] = importedTasks.map((task, idx) => ({
+        id: `tpl_${Date.now()}_${idx}`,
+        timeSlot: task.timeSlot,
+        taskName: task.taskName,
+        scheduleType: task.scheduleType || 'Schedule',
+        applicableScope: task.applicableScope || 'all',
+        daysOfWeek: task.daysOfWeek,
+        specificDate: task.specificDate,
+      }));
+      handleSaveScheduleTemplate(newTemplates);
+      return;
+    }
+
     updateCurrentReport((rep) => ({
       ...rep,
-      tasks: [...rep.tasks, ...importedTasks],
+      tasks: mode === 'replace' ? importedTasks : [...rep.tasks, ...importedTasks],
     }));
   };
 
@@ -641,7 +655,7 @@ export default function App() {
     });
   };
 
-  const handlePhotoSynced = (photoId: string, cloudUrl: string, thumbnailUrl: string) => {
+  const handlePhotoSynced = useCallback((photoId: string, cloudUrl: string, thumbnailUrl: string) => {
     setAppState((prev) => {
       const updatedReports = { ...prev.reports };
       let targetDate: string | null = null;
@@ -664,23 +678,25 @@ export default function App() {
       const rep = updatedReports[targetDate] || createNewDayReport(targetDate, prev.defaultSchedule, prev.userProfile);
       const updatedActivities = (rep.activities || []).map((act) => {
         const photos = act.photos || [];
+        const matchedPhoto = photos.some((p) => p.photoId === photoId) || act.id === photoId;
         const updatedPhotos = photos.map((p) =>
           p.photoId === photoId
             ? { ...p, imageUrl: cloudUrl, thumbnailUrl, syncStatus: 'synced' as const, uploadedAt: new Date().toISOString() }
             : p
         );
+        const shouldUpdateCover = act.id === photoId || (matchedPhoto && (photos[0]?.photoId === photoId || !act.imageUrl));
         return {
           ...act,
           photos: updatedPhotos,
-          imageUrl: act.id === photoId ? cloudUrl : act.imageUrl,
-          thumbnailUrl: act.id === photoId ? thumbnailUrl : act.thumbnailUrl,
+          imageUrl: shouldUpdateCover ? cloudUrl : act.imageUrl,
+          thumbnailUrl: shouldUpdateCover ? thumbnailUrl : act.thumbnailUrl,
         };
       });
 
-      const updatedReport = {
+      const updatedReport: DayReport = {
         ...rep,
         activities: updatedActivities,
-        updatedAt: new Date().toISOString(),
+        lastUpdated: new Date().toISOString(),
       };
 
       updatedReports[targetDate] = updatedReport;
@@ -694,14 +710,14 @@ export default function App() {
         reports: updatedReports,
       };
     });
-  };
+  }, [authUser, selectedDate]);
 
   // Drain queue on app start (after auth) and window 'online' event
   useEffect(() => {
     if (authUser) {
       drainUploadQueue(handlePhotoSynced).catch(console.error);
     }
-  }, [authUser]);
+  }, [authUser, handlePhotoSynced]);
 
   useEffect(() => {
     const handleOnline = () => {
@@ -709,7 +725,7 @@ export default function App() {
     };
     window.addEventListener('online', handleOnline);
     return () => window.removeEventListener('online', handleOnline);
-  }, []);
+  }, [handlePhotoSynced]);
 
   const handleSavePhotoToTodayVault = async (photo: WorkActivityPhoto): Promise<boolean> => {
     return await updateCurrentReport((rep) => {
@@ -749,8 +765,8 @@ export default function App() {
     });
   };
 
-  const handleUpdatePhotoDescription = (photoId: string, description: string) => {
-    updateCurrentReport((rep) => {
+  const handleUpdatePhotoDescription = async (photoId: string, description: string): Promise<boolean> => {
+    return await updateCurrentReport((rep) => {
       const existing = rep.activities || [];
       const updated = existing.map((act) => ({
         ...act,
@@ -765,8 +781,8 @@ export default function App() {
     });
   };
 
-  const handleDeletePhoto = (photoId: string) => {
-    updateCurrentReport((rep) => {
+  const handleDeletePhoto = async (photoId: string): Promise<boolean> => {
+    return await updateCurrentReport((rep) => {
       const existing = rep.activities || [];
       const updated = existing.map((act) => ({
         ...act,

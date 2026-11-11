@@ -15,16 +15,19 @@ import { Language, UserProfile } from '../../types';
 import { TRANSLATIONS } from '../../utils/translations';
 import { processAndUploadWorkPhoto } from '../../utils/imageUploadService';
 import { saveActivityDraft, loadActivityDraft, clearActivityDraft } from '../../utils/workEvidenceService';
+import { PhotoImage } from '../PhotoImage';
 
 interface ActivityFormProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (activity: WorkActivity) => void;
+  onSave: (activity: WorkActivity) => boolean | void | Promise<boolean | void>;
   initialActivity?: WorkActivity | null;
   date: string;
   userProfile: UserProfile;
   language: Language;
 }
+
+const DEFAULT_WORK_CATEGORY = 'Design Poster';
 
 export const ActivityForm: React.FC<ActivityFormProps> = ({
   isOpen,
@@ -35,12 +38,14 @@ export const ActivityForm: React.FC<ActivityFormProps> = ({
   userProfile,
   language,
 }) => {
-  if (!isOpen) return null;
-
   const t = TRANSLATIONS[language] || TRANSLATIONS.en;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [category, setCategory] = useState<string>(initialActivity?.category || 'Graphic Design');
+  const [category, setCategory] = useState<string>(
+    initialActivity?.workCategory !== undefined
+      ? (initialActivity.workCategory || '')
+      : (initialActivity?.category || DEFAULT_WORK_CATEGORY)
+  );
   const [title, setTitle] = useState<string>(initialActivity?.title || '');
   const [description, setDescription] = useState<string>(initialActivity?.description || '');
   const [startTime, setStartTime] = useState<string>(initialActivity?.startTime || '08:00');
@@ -48,25 +53,39 @@ export const ActivityForm: React.FC<ActivityFormProps> = ({
   const [status, setStatus] = useState<ActivityStatus>(initialActivity?.status || 'completed');
   const [photos, setPhotos] = useState<WorkActivityPhoto[]>(initialActivity?.photos || []);
   const [isUploading, setIsUploading] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
 
-  // Restore draft if creating a new activity and draft exists
+  // Sync form fields whenever modal opens or initialActivity / date changes
   useEffect(() => {
-    if (!initialActivity) {
+    if (!isOpen) return;
+
+    if (initialActivity) {
+      setCategory(
+        initialActivity.workCategory !== undefined
+          ? (initialActivity.workCategory || '')
+          : (initialActivity.category || DEFAULT_WORK_CATEGORY)
+      );
+      setTitle(initialActivity.title || '');
+      setDescription(initialActivity.description || '');
+      setStartTime(initialActivity.startTime || '08:00');
+      setEndTime(initialActivity.endTime || '09:30');
+      setStatus(initialActivity.status || 'completed');
+      setPhotos(initialActivity.photos || []);
+    } else {
       const draft = loadActivityDraft(date);
-      if (draft) {
-        if (draft.category) setCategory(draft.category);
-        if (draft.title) setTitle(draft.title);
-        if (draft.description) setDescription(draft.description);
-        if (draft.startTime) setStartTime(draft.startTime);
-        if (draft.endTime) setEndTime(draft.endTime);
-        if (draft.status) setStatus(draft.status as ActivityStatus);
-      }
+      setCategory(draft?.category !== undefined ? draft.category : DEFAULT_WORK_CATEGORY);
+      setTitle(draft?.title || '');
+      setDescription(draft?.description || '');
+      setStartTime(draft?.startTime || '08:00');
+      setEndTime(draft?.endTime || '09:30');
+      setStatus((draft?.status as ActivityStatus) || 'completed');
+      setPhotos([]);
     }
-  }, [initialActivity, date]);
+  }, [isOpen, initialActivity, date]);
 
-  // Auto-save draft as user edits
+  // Auto-save draft as user edits a new activity while modal is open
   useEffect(() => {
-    if (!initialActivity && (title || description)) {
+    if (isOpen && !initialActivity && (title || description)) {
       saveActivityDraft(date, {
         category,
         title,
@@ -76,14 +95,21 @@ export const ActivityForm: React.FC<ActivityFormProps> = ({
         status,
       });
     }
-  }, [category, title, description, startTime, endTime, status, initialActivity, date]);
+  }, [isOpen, category, title, description, startTime, endTime, status, initialActivity, date]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  if (!isOpen) return null;
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSaving) return;
 
     const cleanDesc = description.trim();
     const firstLine = cleanDesc.split('\n')[0].trim();
-    const computedTitle = category ? category : (firstLine ? (firstLine.length > 70 ? firstLine.slice(0, 67) + '...' : firstLine) : (language === 'km' ? 'ភស្តុតាងការងារ' : 'Work Record'));
+    const computedTitle = category
+      ? category
+      : (firstLine
+          ? (firstLine.length > 70 ? firstLine.slice(0, 67) + '...' : firstLine)
+          : (language === 'km' ? 'ភស្តុតាងការងារ' : 'Work Record'));
 
     const activityToSave: WorkActivity = {
       id: initialActivity?.id || `act_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -108,9 +134,18 @@ export const ActivityForm: React.FC<ActivityFormProps> = ({
       updatedAt: new Date().toISOString(),
     };
 
-    onSave(activityToSave);
-    clearActivityDraft(date);
-    onClose();
+    setIsSaving(true);
+    try {
+      const saveResult = await Promise.resolve(onSave(activityToSave));
+      if (saveResult !== false) {
+        clearActivityDraft(date);
+        onClose();
+      }
+    } catch (err) {
+      console.error('Error saving activity:', err);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleAttachPhotos = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -312,10 +347,16 @@ export const ActivityForm: React.FC<ActivityFormProps> = ({
                     key={photo.photoId}
                     className="relative group rounded-xl overflow-hidden border border-slate-200 bg-slate-100 aspect-square shadow-xs"
                   >
-                    <img
-                      src={photo.thumbnailUrl || photo.localDataUrl || photo.imageUrl}
+                    <PhotoImage
+                      photoId={photo.photoId}
+                      imageUrl={photo.imageUrl}
+                      thumbnailUrl={photo.thumbnailUrl}
+                      localDataUrl={photo.localDataUrl}
+                      syncStatus={photo.syncStatus}
+                      uploadStatus={photo.uploadStatus}
                       alt={photo.description || 'Evidence'}
                       className="w-full h-full object-cover"
+                      lang={language}
                     />
                     <button
                       type="button"

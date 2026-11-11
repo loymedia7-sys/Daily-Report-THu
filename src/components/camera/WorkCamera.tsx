@@ -19,19 +19,20 @@ import {
   RefreshCw,
   Edit3
 } from 'lucide-react';
-import { WorkActivity, WorkCategory, WORK_CATEGORIES, WorkActivityPhoto } from '../../types/workReport';
+import { WorkActivity, WORK_CATEGORIES, WorkActivityPhoto } from '../../types/workReport';
 import { DayReport, Language, UserProfile } from '../../types';
 import { TRANSLATIONS } from '../../utils/translations';
+import { safeImgSrc } from '../../utils/dateUtils';
 import { processAndUploadWorkPhoto } from '../../utils/imageUploadService';
 
 interface WorkCameraProps {
   report: DayReport;
   userProfile: UserProfile;
   selectedDate: string;
-  onSaveRecord?: (record: WorkActivity) => void;
-  onDeleteRecord?: (recordId: string) => void;
-  onSavePhotoToActivity?: (activityId: string, photo: WorkActivityPhoto) => void;
-  onSavePhotoToTodayVault?: (photo: WorkActivityPhoto) => void;
+  onSaveRecord?: (record: WorkActivity) => boolean | void | Promise<boolean | void>;
+  onDeleteRecord?: (recordId: string) => boolean | void | Promise<boolean | void>;
+  onSavePhotoToActivity?: (activityId: string, photo: WorkActivityPhoto) => boolean | void | Promise<boolean | void>;
+  onSavePhotoToTodayVault?: (photo: WorkActivityPhoto) => boolean | void | Promise<boolean | void>;
   onBackToDashboard?: () => void;
   language: Language;
 }
@@ -42,7 +43,6 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
   selectedDate,
   onSaveRecord,
   onDeleteRecord,
-  onSavePhotoToActivity,
   onSavePhotoToTodayVault,
   onBackToDashboard,
   language,
@@ -52,6 +52,7 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
   // Stream & Hardware States
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
@@ -78,8 +79,8 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
   const startCamera = useCallback(async (facing: 'environment' | 'user') => {
     setCameraError(null);
     try {
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
       }
 
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -96,6 +97,7 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
         audio: false,
       });
 
+      streamRef.current = mediaStream;
       setStream(mediaStream);
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
@@ -105,17 +107,18 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
       console.warn('Camera access issue:', err);
       setCameraError('Camera access was not granted or device camera is busy. You can use the gallery file uploader below.');
     }
-  }, [stream]);
+  }, []);
 
-  // Boot camera on mount
+  // Boot camera on mount and when facingMode changes
   useEffect(() => {
     startCamera(facingMode);
     return () => {
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
       }
     };
-  }, [facingMode]);
+  }, [facingMode, startCamera]);
 
   // Flip Camera (Front / Rear)
   const handleToggleCamera = () => {
@@ -297,7 +300,7 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
     setEditDescription(rec.description || '');
   };
 
-  const handleSaveEditRecord = () => {
+  const handleSaveEditRecord = async () => {
     if (!editingRecord || !onSaveRecord) return;
     const cleanDesc = editDescription.trim();
     const firstLine = cleanDesc.split('\n')[0]?.trim();
@@ -315,16 +318,25 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
       updatedAt: new Date().toISOString(),
     };
 
-    onSaveRecord(updated);
-    setEditingRecord(null);
+    const res = await Promise.resolve(onSaveRecord(updated));
+    if (res !== false) {
+      setEditingRecord(null);
+      setSaveSuccessNotice(t.savedWorkEvidenceSuccess);
+      setTimeout(() => setSaveSuccessNotice(null), 3000);
+    } else {
+      setSaveSuccessNotice(t.storageFullWarning);
+      setTimeout(() => setSaveSuccessNotice(null), 4000);
+    }
   };
 
-  const handleDeleteRecord = (id: string) => {
+  const handleDeleteRecord = async (id: string) => {
     if (confirm(t.confirmDeleteActivity)) {
+      let deleted = true;
       if (onDeleteRecord) {
-        onDeleteRecord(id);
+        const res = await Promise.resolve(onDeleteRecord(id));
+        if (res === false) deleted = false;
       }
-      if (editingRecord?.id === id) {
+      if (deleted && editingRecord?.id === id) {
         setEditingRecord(null);
       }
     }
@@ -390,11 +402,13 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
           <div className="w-full bg-white border border-slate-200 rounded-2xl p-4 sm:p-6 shadow-md space-y-4 animate-fadeIn">
             {/* Captured Photo Preview */}
             <div className="relative aspect-[4/3] sm:aspect-[16/9] bg-slate-100 rounded-xl overflow-hidden border border-slate-200 shadow-inner flex items-center justify-center">
-              <img
-                src={pendingPhotoDataUrl}
-                alt="Captured Evidence"
-                className="w-full h-full object-contain"
-              />
+              {safeImgSrc(pendingPhotoDataUrl) && (
+                <img
+                  src={safeImgSrc(pendingPhotoDataUrl)}
+                  alt="Captured Evidence"
+                  className="w-full h-full object-contain"
+                />
+              )}
               <div className="absolute top-2 left-2 bg-white/90 backdrop-blur-xs px-2.5 py-1 rounded-lg text-[10px] text-slate-700 flex items-center gap-1.5 border border-slate-200 font-mono shadow-xs">
                 <Clock size={11} className="text-blue-600" />
                 <span>{new Date(pendingCapturedAt).toLocaleTimeString()}</span>
@@ -764,13 +778,18 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
             </div>
 
             {/* Photo preview */}
-            <div className="w-full h-44 rounded-xl overflow-hidden bg-black border border-slate-800 flex items-center justify-center">
-              <img
-                src={editingRecord.imageUrl || editingRecord.thumbnailUrl || (editingRecord.photos?.[0]?.imageUrl ?? '')}
-                alt={editingRecord.description}
-                className="w-full h-full object-contain"
-              />
-            </div>
+            {(() => {
+              const editSrc = safeImgSrc(editingRecord.imageUrl || editingRecord.thumbnailUrl || (editingRecord.photos?.[0]?.imageUrl ?? ''));
+              return editSrc ? (
+                <div className="w-full h-44 rounded-xl overflow-hidden bg-black border border-slate-800 flex items-center justify-center">
+                  <img
+                    src={editSrc}
+                    alt={editingRecord.description}
+                    className="w-full h-full object-contain"
+                  />
+                </div>
+              ) : null;
+            })()}
 
             {/* Work Category Dropdown */}
             <div>

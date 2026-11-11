@@ -3,7 +3,7 @@
  * with Cloudinary unsigned preset uploads and high-performance base64 fallback.
  */
 
-import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET } from '../config/cloudinary';
+import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET, normalizeCloudinaryConfig } from '../config/cloudinary';
 
 // Default Cloudinary configuration (unsigned only)
 export const DEFAULT_CLOUDINARY_CONFIG = {
@@ -80,8 +80,7 @@ export async function uploadLogoImage(
 ): Promise<UploadResult> {
   const compressedBase64 = await compressImage(file, 400, 400);
 
-  const cloudName = (config?.cloudName?.trim() || CLOUDINARY_CLOUD_NAME).trim();
-  const uploadPreset = (config?.uploadPreset?.trim() || CLOUDINARY_UPLOAD_PRESET).trim();
+  const { cloudName, uploadPreset } = normalizeCloudinaryConfig(config?.cloudName, config?.uploadPreset);
 
   if (cloudName && uploadPreset) {
     try {

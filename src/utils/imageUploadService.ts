@@ -1,5 +1,5 @@
 import { WorkActivityPhoto } from '../types/workReport';
-import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET } from '../config/cloudinary';
+import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET, normalizeCloudinaryConfig } from '../config/cloudinary';
 
 export const DEFAULT_CLOUDINARY_CLOUD_NAME = CLOUDINARY_CLOUD_NAME;
 export const DEFAULT_CLOUDINARY_UPLOAD_PRESET = CLOUDINARY_UPLOAD_PRESET;
@@ -203,8 +203,7 @@ export async function uploadWorkPhotoToCloudinary(
     uploadPreset?: string;
   }
 ): Promise<{ secureUrl: string; thumbnailUrl: string; bytes: number }> {
-  const cloudName = (config?.cloudName?.trim() || DEFAULT_CLOUDINARY_CLOUD_NAME).trim();
-  const uploadPreset = (config?.uploadPreset?.trim() || DEFAULT_CLOUDINARY_UPLOAD_PRESET).trim();
+  const { cloudName, uploadPreset } = normalizeCloudinaryConfig(config?.cloudName, config?.uploadPreset);
 
   const formData = new FormData();
   formData.append('file', blob, `work_${Date.now()}.jpg`);
@@ -219,6 +218,33 @@ export async function uploadWorkPhotoToCloudinary(
 
   if (!response.ok) {
     const errorText = await response.text();
+    if (response.status === 400 && errorText.includes('Upload preset not found') && uploadPreset !== 'ml_default') {
+      console.warn(`[Cloudinary] Preset "${uploadPreset}" not found. Retrying with fallback "ml_default"...`);
+      const fallbackFormData = new FormData();
+      fallbackFormData.append('file', blob, `work_${Date.now()}.jpg`);
+      fallbackFormData.append('upload_preset', 'ml_default');
+      fallbackFormData.append('folder', 'tiv_huor_work_evidence');
+      
+      const fallbackResponse = await fetch(uploadEndpoint, {
+        method: 'POST',
+        body: fallbackFormData,
+      });
+
+      if (fallbackResponse.ok) {
+        const result = await fallbackResponse.json();
+        const secureUrl = result.secure_url;
+        let thumbnailUrl = secureUrl;
+        if (secureUrl && secureUrl.includes('/image/upload/')) {
+          thumbnailUrl = secureUrl.replace('/image/upload/', '/image/upload/c_fill,w_300,h_300,g_auto,q_auto/');
+        }
+        return {
+          secureUrl,
+          thumbnailUrl,
+          bytes: result.bytes || blob.size,
+        };
+      }
+    }
+
     console.error("[Cloudinary]", response.status, errorText);
     throw new Error(`Cloudinary upload failed (${response.status}): ${errorText}`);
   }
@@ -302,8 +328,9 @@ export async function processAndUploadWorkPhoto(
         syncStatus: 'synced',
         uploadStatus: 'uploaded',
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.warn('Direct upload failed, keeping in offline queue:', err);
+      const errMessage = err instanceof Error ? err.message : String(err);
       return {
         photoId,
         imageUrl: '',
@@ -314,7 +341,7 @@ export async function processAndUploadWorkPhoto(
         fileSize: compressed.sizeBytes,
         syncStatus: 'pending',
         uploadStatus: 'failed',
-        error: err?.message || String(err),
+        error: errMessage,
       };
     }
   }
@@ -337,7 +364,7 @@ export async function processAndUploadWorkPhoto(
  * Background queue drainer: syncs any pending photos when online
  */
 export async function drainUploadQueue(
-  onSynced?: (photoId: string, cloudUrl: string, thumbnailUrl: string) => void | Promise<void>
+  onSynced?: (photoId: string, cloudUrl: string, thumbnailUrl: string) => boolean | void | Promise<boolean | void>
 ): Promise<number> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) return 0;
   
@@ -352,13 +379,22 @@ export async function drainUploadQueue(
 
       const uploadRes = await uploadWorkPhotoToCloudinary(item.blob);
 
+      let reportUpdated = true;
       if (onSynced) {
-        await Promise.resolve(onSynced(item.photoId, uploadRes.secureUrl, uploadRes.thumbnailUrl));
+        const res = await Promise.resolve(onSynced(item.photoId, uploadRes.secureUrl, uploadRes.thumbnailUrl));
+        if (res === false) {
+          reportUpdated = false;
+        }
       }
 
-      // Only remove a queue item after the report has been updated successfully
-      await removeQueuedUpload(item.photoId);
-      syncedCount++;
+      if (reportUpdated) {
+        // Only remove a queue item after the report has been updated successfully
+        await removeQueuedUpload(item.photoId);
+        syncedCount++;
+      } else {
+        item.status = 'pending';
+        await savePhotoToIndexedDBQueue(item);
+      }
     } catch (err) {
       item.status = 'failed';
       item.error = String(err);
@@ -369,11 +405,4 @@ export async function drainUploadQueue(
   }
 
   return syncedCount;
-}
-
-// Setup auto-drain on window 'online' event
-if (typeof window !== 'undefined') {
-  window.addEventListener('online', () => {
-    drainUploadQueue().catch(console.error);
-  });
 }
