@@ -1,13 +1,38 @@
 {
+  "id": "/",
   "short_name": "DailyReport",
   "name": "Daily Report Schedule Tracker",
   "description": "Automated daily schedule checklist and report generator with live sync, auto-holiday detection, and export.",
   "icons": [
     {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
       "src": "/icon.svg",
-      "sizes": "192x192 512x512",
+      "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
   ],
   "start_url": "/",
@@ -15,5 +40,7 @@
   "background_color": "#0F172A",
   "theme_color": "#4F46E5",
   "display": "standalone",
-  "orientation": "portrait"
+  "orientation": "portrait",
+  "categories": ["productivity", "business", "utilities"]
 }
+

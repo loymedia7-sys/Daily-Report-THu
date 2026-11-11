@@ -8,7 +8,8 @@ import {
   X,
   FileSpreadsheet,
   LogOut,
-  Download
+  Download,
+  Smartphone
 } from 'lucide-react';
 import { UserProfile, AuthUser, Language } from '../types';
 import { TRANSLATIONS } from '../utils/translations';
@@ -23,6 +24,7 @@ interface HeaderProps {
   onOpenImportModal?: () => void;
   onOpenInstallModal?: () => void;
   isInstalled?: boolean;
+  isSyncing?: boolean;
   completionPercentage?: number;
   isHoliday?: boolean;
   onGoogleLogin: () => void;
@@ -40,6 +42,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSettingsModal,
   onOpenTemplateModal,
   onOpenExportModal,
+  onOpenInstallModal,
+  isInstalled = false,
   onGoogleLogin,
   onLogout,
   currentView,
@@ -51,7 +55,7 @@ export const Header: React.FC<HeaderProps> = ({
   const t = TRANSLATIONS[language] || TRANSLATIONS.en;
 
   return (
-    <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-2xs">
+    <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-2xs pt-safe">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-14 sm:h-16 gap-2 sm:gap-4">
           
@@ -194,6 +198,18 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
 
+            {/* Install App Button (shown when not running in standalone installed mode) */}
+            {!isInstalled && onOpenInstallModal && (
+              <button
+                onClick={onOpenInstallModal}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 shadow-2xs transition-all active:scale-95 cursor-pointer"
+                title={t.installApp}
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                <span className="hidden lg:inline">{t.installApp}</span>
+              </button>
+            )}
+
             <button
               onClick={onOpenExportModal}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-amber-400 hover:bg-amber-300 text-slate-900 shadow-2xs transition-all active:scale-95 cursor-pointer"
@@ -222,6 +238,17 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Mobile Menu Button */}
           <div className="flex md:hidden items-center gap-1.5">
+            {!isInstalled && onOpenInstallModal && (
+              <button
+                onClick={onOpenInstallModal}
+                className="p-2 rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200 font-bold shadow-2xs"
+                title={t.installApp}
+                aria-label={t.installApp}
+              >
+                <Smartphone className="w-4 h-4" />
+              </button>
+            )}
+
             <button
               onClick={onOpenExportModal}
               className="p-2 rounded-xl bg-amber-400 text-slate-900 font-bold shadow-2xs"
@@ -320,6 +347,20 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </div>
 
+          {/* Install to Home Screen Action in Mobile Drawer */}
+          {!isInstalled && onOpenInstallModal && (
+            <button
+              onClick={() => {
+                onOpenInstallModal();
+                setIsMobileMenuOpen(false);
+              }}
+              className="w-full flex items-center justify-center gap-2 p-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+            >
+              <Smartphone className="w-4 h-4" />
+              <span>{t.installApp} (iPhone / iPad / Android)</span>
+            </button>
+          )}
+
           {/* Cloud Login / Logout in Mobile */}
           <div className="pt-2 border-t border-slate-100">
             {authUser ? (
@@ -384,3 +425,4 @@ export const Header: React.FC<HeaderProps> = ({
     </header>
   );
 };
+

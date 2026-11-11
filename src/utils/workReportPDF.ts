@@ -1,10 +1,11 @@
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { DayReport, UserProfile, Language } from '../types';
-import { WorkActivity, WORK_CATEGORIES } from '../types/workReport';
-import { formatKhmerDate, TRANSLATIONS } from './translations';
+import { WORK_CATEGORIES } from '../types/workReport';
+import { formatKhmerDate } from './translations';
 import { formatDateToScreenshotBanner } from './dateUtils';
 import { calculateActivityStats, countEvidencePhotosInReport } from './workEvidenceService';
+import { getCachedPhotoDataUrl } from './imageUploadService';
 
 function escapeHtml(str: string | undefined | null): string {
   if (!str) return '';
@@ -17,7 +18,7 @@ function escapeHtml(str: string | undefined | null): string {
 }
 
 /**
- * Formats captured timestamp to clean 12-hour format e.g. "11:12:17 AM" matching the requested design
+ * Formats captured timestamp to clean 12-hour format e.g. "11:12:17 AM"
  */
 function formatPhotoTime(dateVal?: string | number): string {
   if (!dateVal) return '';
@@ -36,7 +37,7 @@ function formatPhotoTime(dateVal?: string | number): string {
 }
 
 /**
- * Converts image URL to base64 Data URL to guarantee reliable rendering in html2canvas with zero CORS issues
+ * Converts an image URL to a base64 Data URL for reliable html2canvas rendering
  */
 async function ensureDataUrl(url: string): Promise<string> {
   if (!url) return '';
@@ -56,7 +57,8 @@ async function ensureDataUrl(url: string): Promise<string> {
 }
 
 /**
- * Creates an offscreen DOM container with standard A4 dimensions (794px width at 96 DPI)
+ * Creates an offscreen DOM container with A4 dimensions (794px width)
+ * and renders it to a high-resolution canvas.
  */
 async function renderPageToCanvas(pageHtml: string): Promise<HTMLCanvasElement> {
   const container = document.createElement('div');
@@ -64,7 +66,7 @@ async function renderPageToCanvas(pageHtml: string): Promise<HTMLCanvasElement> 
   container.style.top = '-20000px';
   container.style.left = '-20000px';
   container.style.width = '794px';
-  container.style.minHeight = '1120px'; // Standard A4 height
+  container.style.minHeight = '1120px';
   container.style.backgroundColor = '#ffffff';
   container.style.color = '#0f172a';
   container.style.boxSizing = 'border-box';
@@ -78,7 +80,7 @@ async function renderPageToCanvas(pageHtml: string): Promise<HTMLCanvasElement> 
   if (document.fonts) {
     await document.fonts.ready;
   }
-  // Allow all img tags to load
+
   const images = Array.from(container.querySelectorAll('img'));
   await Promise.all(
     images.map((img) => {
@@ -104,7 +106,7 @@ async function renderPageToCanvas(pageHtml: string): Promise<HTMLCanvasElement> 
   return canvas;
 }
 
-interface FlattenedPhotoItem {
+interface PhotoItem {
   photoIndex: number;
   recordNumber: number;
   categoryLabelEn: string;
@@ -114,17 +116,11 @@ interface FlattenedPhotoItem {
   activityTitle: string;
   imageUrl: string;
   capturedAt: string | number;
-  startTime?: string;
-  endTime?: string;
-  status?: string;
+  startTime: string;
+  endTime: string;
+  status: string;
 }
 
-/**
- * Generates the complete Daily Work Report PDF with photo evidence cards layout
- * Fulfills User Request:
- * 1. Image gallery: bigger photos with #1, #2 badge.
- * 2. Table: removed Time and Status, replaced Status with Number of Images (e.g. 1).
- */
 export async function exportWorkReportWithPhotosPDF(
   report: DayReport,
   userProfile: UserProfile,
@@ -141,13 +137,10 @@ export async function exportWorkReportWithPhotosPDF(
 
   const isCheckedIn = Boolean(report.isCheckedIn);
   const isPermission = Boolean(report.isPermission);
-  const isHoliday = Boolean(report.isHoliday);
-
   const dateFormatted =
     language === 'km' ? formatKhmerDate(report.date) : formatDateToScreenshotBanner(report.date);
 
-  // 1. Flatten all photo records
-  const photoItems: FlattenedPhotoItem[] = [];
+  const photoItems: PhotoItem[] = [];
   let recordCounter = 1;
   let photoCounter = 1;
 
@@ -158,16 +151,22 @@ export async function exportWorkReportWithPhotosPDF(
     const catItem = WORK_CATEGORIES.find(
       (c) => c.id === rawCat || c.labelEn.toLowerCase() === (rawCat || '').toLowerCase()
     );
-
     const isSkippedCategory = !rawCat;
     const categoryLabelEn = catItem ? catItem.labelEn : rawCat || 'Not Selected';
     const categoryLabelKm = catItem ? catItem.labelKm : '';
 
     const photos = act.photos || [];
-
     if (photos.length > 0) {
       for (const p of photos) {
-        const rawUrl = p.localDataUrl || p.thumbnailUrl || p.imageUrl || act.imageUrl;
+        let rawUrl = p.localDataUrl || p.thumbnailUrl || p.imageUrl || act.imageUrl || '';
+        if (!rawUrl && p.photoId) {
+          try {
+            const cached = await getCachedPhotoDataUrl(p.photoId);
+            if (cached) rawUrl = cached;
+          } catch {
+            // ignore IndexedDB lookup failure
+          }
+        }
         const convertedUrl = await ensureDataUrl(rawUrl);
         photoItems.push({
           photoIndex: photoCounter++,
@@ -203,10 +202,6 @@ export async function exportWorkReportWithPhotosPDF(
     }
   }
 
-  // 2. Decide layout:
-  // If activities <= 4 and photos <= 3, everything fits cleanly on Page 1!
-  // Otherwise, Page 1 holds the executive summary and activity table, and following pages
-  // display the photo gallery in 3-column grid (up to 6 photos per page).
   const photosWithImages = photoItems.filter((p) => Boolean(p.imageUrl));
   const canFitOnPage1 = rawActivities.length <= 5 && photosWithImages.length <= 3;
 
@@ -216,12 +211,10 @@ export async function exportWorkReportWithPhotosPDF(
     format: 'a4',
   });
 
-  // Calculate total pages (WITHOUT the removed final signature page)
-  let photoPages: FlattenedPhotoItem[][] = [];
+  let photoPages: PhotoItem[][] = [];
   if (canFitOnPage1) {
-    photoPages = [photosWithImages]; // rendered on page 1
+    photoPages = [photosWithImages];
   } else {
-    // Paginate in batches of 6 (3 columns x 2 rows)
     const BATCH_SIZE = 6;
     for (let i = 0; i < photosWithImages.length; i += BATCH_SIZE) {
       photoPages.push(photosWithImages.slice(i, i + BATCH_SIZE));
@@ -234,10 +227,7 @@ export async function exportWorkReportWithPhotosPDF(
   const totalPdfPages = canFitOnPage1 ? 1 : 1 + Math.max(photoPages.length, 1);
   let currentPageNum = 1;
 
-  // ==========================================
-  // PAGE 1: EXECUTIVE SUMMARY + WORK TABLE + (OPTIONAL PHOTO GRID IF <= 3 PHOTOS)
-  // ==========================================
-  const renderPhotoGridHtml = (photos: FlattenedPhotoItem[]) => {
+  const renderPhotoGridHtml = (photos: PhotoItem[]) => {
     if (photos.length === 0) return '';
     return `
       <div style="margin-top: 22px;">
@@ -304,8 +294,8 @@ export async function exportWorkReportWithPhotosPDF(
                 isCheckedIn
                   ? `<span style="color: #16a34a; font-weight: bold;">${language === 'km' ? 'វត្តមាន (Present)' : 'Present'}</span>`
                   : isPermission
-                  ? `<span style="color: #b45309; font-weight: bold;">${language === 'km' ? 'មានច្បាប់ (Permission)' : 'Permission (Leave)'}</span>`
-                  : `<span style="color: #dc2626; font-weight: bold;">${language === 'km' ? 'អវត្តមាន (Absent)' : 'Absent'}</span>`
+                    ? `<span style="color: #b45309; font-weight: bold;">${language === 'km' ? 'មានច្បាប់ (Permission)' : 'Permission (Leave)'}</span>`
+                    : `<span style="color: #dc2626; font-weight: bold;">${language === 'km' ? 'អវត្តមាន (Absent)' : 'Absent'}</span>`
               }
             </div>
           </div>
@@ -369,9 +359,16 @@ export async function exportWorkReportWithPhotosPDF(
                 rawActivities.length > 0
                   ? rawActivities
                       .map((act, idx) => {
-                        const rawCat = act.workCategory || (act.category !== 'Other Activities' && act.category !== 'Other' ? act.category : null);
+                        const rawCat =
+                          act.workCategory ||
+                          (act.category !== 'Other Activities' && act.category !== 'Other' ? act.category : null);
                         const isSkipped = !rawCat;
-                        const actPhotos = act.photos && act.photos.length > 0 ? act.photos : (act.imageUrl ? [act.imageUrl] : []);
+                        const actPhotos =
+                          act.photos && act.photos.length > 0
+                            ? act.photos
+                            : act.imageUrl
+                              ? [act.imageUrl]
+                              : [];
                         const imgCount = actPhotos.length > 0 ? actPhotos.length : '-';
                         return `
                         <tr style="border-bottom: 1px solid #e2e8f0; background: ${idx % 2 === 0 ? '#ffffff' : '#f8fafc'};">
@@ -421,16 +418,11 @@ export async function exportWorkReportWithPhotosPDF(
   const imgData1 = canvas1.toDataURL('image/jpeg', 0.96);
   doc.addImage(imgData1, 'JPEG', 0, 0, 210, 297);
 
-  // ==========================================
-  // FOLLOWING PAGES: DEDICATED 3-COLUMN PHOTO GALLERY (IF PHOTOS > 3 OR NOT FIT ON PAGE 1)
-  // ==========================================
   if (!canFitOnPage1 && photoPages.length > 0) {
     for (let pIdx = 0; pIdx < photoPages.length; pIdx++) {
       currentPageNum++;
       doc.addPage();
-
       const batchPhotos = photoPages[pIdx];
-
       const pageNHtml = `
         <div style="width: 100%; min-height: 1040px; display: flex; flex-direction: column; justify-content: space-between; font-family: 'Battambang', 'Kantumruy Pro', sans-serif;">
           <div>
@@ -492,17 +484,12 @@ export async function exportWorkReportWithPhotosPDF(
           </div>
         </div>
       `;
-
       const canvasN = await renderPageToCanvas(pageNHtml);
       const imgDataN = canvasN.toDataURL('image/jpeg', 0.96);
       doc.addImage(imgDataN, 'JPEG', 0, 0, 210, 297);
     }
   }
 
-  // NOTE: The previous unwanted final page ("Daily Notes & Summary" + "VERIFICATION & APPROVAL")
-  // shown in image_ff199a23.png is completely removed as requested!
-
-  // Save PDF
   const cleanName = (userProfile.employeeName || 'Employee').replace(/\s+/g, '_');
   const fileName = `Daily_Work_Report_${report.date}_${cleanName}.pdf`;
   doc.save(fileName);

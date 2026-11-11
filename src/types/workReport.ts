@@ -123,8 +123,8 @@ export interface WorkActivityPhoto {
   capturedAt: string; // ISO string or human formatted
   uploadedAt: string;
   fileSize?: number;
-  syncStatus?: 'synced' | 'pending' | 'failed';
-  uploadStatus?: 'uploaded' | 'queued' | 'failed';
+  syncStatus?: 'synced' | 'pending' | 'uploading' | 'failed';
+  uploadStatus?: 'uploaded' | 'uploading' | 'queued' | 'failed';
   error?: string;
   localDataUrl?: string; // Cache for offline viewing
 }

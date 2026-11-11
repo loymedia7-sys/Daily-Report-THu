@@ -7,7 +7,6 @@ import {
   Trash2,
   AlertCircle,
   X,
-  Sparkles,
   Layers,
   ArrowLeft,
   Upload,
@@ -23,7 +22,8 @@ import { WorkActivity, WORK_CATEGORIES, WorkActivityPhoto } from '../../types/wo
 import { DayReport, Language, UserProfile } from '../../types';
 import { TRANSLATIONS } from '../../utils/translations';
 import { safeImgSrc } from '../../utils/dateUtils';
-import { processAndUploadWorkPhoto } from '../../utils/imageUploadService';
+import { processAndUploadWorkPhoto, validateWorkPhotoInput } from '../../utils/imageUploadService';
+import { PhotoImage } from '../PhotoImage';
 
 interface WorkCameraProps {
   report: DayReport;
@@ -35,6 +35,79 @@ interface WorkCameraProps {
   onSavePhotoToTodayVault?: (photo: WorkActivityPhoto) => boolean | void | Promise<boolean | void>;
   onBackToDashboard?: () => void;
   language: Language;
+}
+
+/**
+ * Checks whether a MediaStream is currently active and has at least one live video track.
+ */
+export function isMediaStreamLive(mediaStream: MediaStream | null): boolean {
+  if (!mediaStream) return false;
+  if (typeof mediaStream.active === 'boolean' && !mediaStream.active) return false;
+  const videoTracks = typeof mediaStream.getVideoTracks === 'function'
+    ? mediaStream.getVideoTracks()
+    : mediaStream.getTracks();
+  if (!videoTracks || videoTracks.length === 0) return false;
+  return videoTracks.some((track) => track.readyState === 'live' && track.enabled !== false);
+}
+
+/**
+ * Stops all tracks on a MediaStream safely.
+ */
+export function stopMediaStreamTracks(mediaStream: MediaStream | null): void {
+  if (!mediaStream) return;
+  try {
+    mediaStream.getTracks().forEach((track) => {
+      try {
+        track.onended = null;
+        track.stop();
+      } catch {
+        // Ignore individual track stop errors
+      }
+    });
+  } catch {
+    // Ignore stream track iteration errors
+  }
+}
+
+/**
+ * Attaches an active MediaStream to a newly mounted or existing <video> element,
+ * waits for metadata if needed, and starts playback safely.
+ */
+export function attachStreamToVideoElement(
+  videoEl: HTMLVideoElement | null,
+  mediaStream: MediaStream | null,
+  isStillValid: () => boolean = () => true
+): void {
+  if (!videoEl || !mediaStream) return;
+
+  videoEl.muted = true;
+  videoEl.playsInline = true;
+
+  if (videoEl.srcObject !== mediaStream) {
+    videoEl.srcObject = mediaStream;
+  }
+
+  const playVideo = () => {
+    if (!isStillValid()) return;
+    const playPromise = videoEl.play();
+    if (playPromise && typeof playPromise.catch === 'function') {
+      playPromise.catch((err) => {
+        if (err?.name === 'AbortError') return;
+        console.warn('Video playback error:', err);
+      });
+    }
+  };
+
+  if (videoEl.readyState >= 1) {
+    playVideo();
+  } else {
+    const handleLoadedMetadata = () => {
+      videoEl.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      playVideo();
+    };
+    videoEl.addEventListener('loadedmetadata', handleLoadedMetadata);
+    playVideo();
+  }
 }
 
 export const WorkCamera: React.FC<WorkCameraProps> = ({
@@ -49,10 +122,14 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
 }) => {
   const t = TRANSLATIONS[language] || TRANSLATIONS.en;
 
-  // Stream & Hardware States
+  // Stream & Hardware Refs / States
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const activeFacingModeRef = useRef<'environment' | 'user' | null>(null);
+  const cameraRequestIdRef = useRef<number>(0);
+  const isMountedRef = useRef<boolean>(true);
+
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
@@ -69,56 +146,169 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>(''); // empty string = skip / not selected
   const [workDescription, setWorkDescription] = useState<string>('');
   const [saveSuccessNotice, setSaveSuccessNotice] = useState<string | null>(null);
+  const [cameraNoticeError, setCameraNoticeError] = useState<string | null>(null);
 
   // Preview / Editing modal for existing saved photos in gallery
   const [editingRecord, setEditingRecord] = useState<WorkActivity | null>(null);
   const [editCategory, setEditCategory] = useState<string>('');
   const [editDescription, setEditDescription] = useState<string>('');
 
-  // Start Camera Stream (rear camera by default)
-  const startCamera = useCallback(async (facing: 'environment' | 'user') => {
-    setCameraError(null);
-    try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-      }
+  const attachStreamToVideo = useCallback((videoEl: HTMLVideoElement | null, mediaStream: MediaStream | null) => {
+    attachStreamToVideoElement(videoEl, mediaStream, () => isMountedRef.current && videoRef.current === videoEl);
+  }, []);
 
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setCameraError('Camera API is not supported on this browser or connection is not secure (HTTPS).');
+  /**
+   * Starts or reuses the camera stream cleanly without duplicate permission prompts
+   * or concurrent stream leaks.
+   */
+  const startCamera = useCallback(
+    async (facing: 'environment' | 'user', options?: { forceRestart?: boolean }) => {
+      if (!isMountedRef.current) return;
+
+      // Reuse existing live stream if already running for the requested facingMode
+      if (
+        !options?.forceRestart &&
+        activeFacingModeRef.current === facing &&
+        isMediaStreamLive(streamRef.current)
+      ) {
+        setCameraError(null);
+        setStream(streamRef.current);
+        if (videoRef.current) {
+          attachStreamToVideo(videoRef.current, streamRef.current);
+        }
         return;
       }
 
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: facing },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        },
-        audio: false,
-      });
+      const requestId = ++cameraRequestIdRef.current;
+      setCameraError(null);
 
-      streamRef.current = mediaStream;
-      setStream(mediaStream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-        videoRef.current.play().catch(() => {});
+      // Stop any previous stream before opening the new camera device
+      if (streamRef.current) {
+        stopMediaStreamTracks(streamRef.current);
+        streamRef.current = null;
+        activeFacingModeRef.current = null;
       }
-    } catch (err) {
-      console.warn('Camera access issue:', err);
-      setCameraError('Camera access was not granted or device camera is busy. You can use the gallery file uploader below.');
-    }
+
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        if (isMountedRef.current && requestId === cameraRequestIdRef.current) {
+          setCameraError('Camera API is not supported on this browser or connection is not secure (HTTPS).');
+        }
+        return;
+      }
+
+      try {
+        let mediaStream: MediaStream;
+        try {
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: { ideal: facing },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+            },
+            audio: false,
+          });
+        } catch (constraintErr: unknown) {
+          const errName = (constraintErr as { name?: string })?.name;
+          // Fallback to generic video constraint if device rejects resolution/facingMode constraints
+          if (errName === 'OverconstrainedError' || errName === 'ConstraintNotSatisfiedError') {
+            mediaStream = await navigator.mediaDevices.getUserMedia({
+              video: true,
+              audio: false,
+            });
+          } else {
+            throw constraintErr;
+          }
+        }
+
+        // If component unmounted or a newer startCamera call superseded this one, immediately stop tracks
+        if (!isMountedRef.current || requestId !== cameraRequestIdRef.current) {
+          stopMediaStreamTracks(mediaStream);
+          return;
+        }
+
+        // Listen for unexpected stream termination (e.g., OS revokes camera or hardware disconnect)
+        const videoTracks = typeof mediaStream.getVideoTracks === 'function'
+          ? mediaStream.getVideoTracks()
+          : mediaStream.getTracks();
+        videoTracks.forEach((track) => {
+          track.onended = () => {
+            if (!isMountedRef.current || streamRef.current !== mediaStream) return;
+            streamRef.current = null;
+            activeFacingModeRef.current = null;
+            setStream(null);
+          };
+        });
+
+        streamRef.current = mediaStream;
+        activeFacingModeRef.current = facing;
+        setStream(mediaStream);
+        setCameraError(null);
+
+        if (videoRef.current) {
+          attachStreamToVideo(videoRef.current, mediaStream);
+        }
+      } catch (err: unknown) {
+        if (!isMountedRef.current || requestId !== cameraRequestIdRef.current) return;
+        console.warn('Camera access issue:', err);
+        const errName = (err as { name?: string })?.name || '';
+        if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
+          setCameraError('Camera permission was denied. Please allow camera access or upload from gallery below.');
+        } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
+          setCameraError('Camera is already in use by another application. Please close other apps or upload from gallery.');
+        } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+          setCameraError('No camera device was found on this device. You can use the gallery file uploader below.');
+        } else {
+          setCameraError('Camera access was not granted or device camera is busy. You can use the gallery file uploader below.');
+        }
+      }
+    },
+    [attachStreamToVideo]
+  );
+
+  // Track mount status & clean up all MediaStream tracks on unmount
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      cameraRequestIdRef.current += 1;
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+      stopMediaStreamTracks(streamRef.current);
+      streamRef.current = null;
+      activeFacingModeRef.current = null;
+    };
   }, []);
 
-  // Boot camera on mount and when facingMode changes
+  // Start or switch camera when facingMode changes
   useEffect(() => {
     startCamera(facingMode);
-    return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
-      }
-    };
   }, [facingMode, startCamera]);
+
+  // Reattach active stream (or restart if stream ended) whenever returning from preview to live camera view
+  useEffect(() => {
+    if (pendingPhotoDataUrl !== null) return;
+
+    if (isMediaStreamLive(streamRef.current)) {
+      if (videoRef.current) {
+        attachStreamToVideo(videoRef.current, streamRef.current);
+      }
+    } else {
+      startCamera(facingMode, { forceRestart: true });
+    }
+  }, [pendingPhotoDataUrl, stream, facingMode, attachStreamToVideo, startCamera]);
+
+  // Callback ref for the <video> element so that whenever React recreates the <video> DOM node,
+  // the existing live MediaStream is immediately attached.
+  const handleVideoElementRef = useCallback(
+    (node: HTMLVideoElement | null) => {
+      videoRef.current = node;
+      if (node && isMediaStreamLive(streamRef.current)) {
+        attachStreamToVideo(node, streamRef.current);
+      }
+    },
+    [attachStreamToVideo]
+  );
 
   // Flip Camera (Front / Rear)
   const handleToggleCamera = () => {
@@ -132,13 +322,17 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
 
     try {
       setIsCapturing(true);
+      setCameraNoticeError(null);
       const video = videoRef.current;
       const canvas = document.createElement('canvas');
       canvas.width = video.videoWidth || 1280;
       canvas.height = video.videoHeight || 720;
 
       const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+      if (!ctx) {
+        setIsCapturing(false);
+        return;
+      }
 
       // Handle front camera mirroring
       if (facingMode === 'user') {
@@ -148,7 +342,11 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
       // Flash feedback animation
-      setTimeout(() => setIsCapturing(false), 200);
+      setTimeout(() => {
+        if (isMountedRef.current) {
+          setIsCapturing(false);
+        }
+      }, 200);
 
       const capturedAt = new Date().toISOString();
       const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
@@ -171,19 +369,35 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
 
     try {
       const file = files[0];
+      const validation = validateWorkPhotoInput(file);
+      if (!validation.valid) {
+        setCameraNoticeError(validation.error || 'Unsupported or invalid image file.');
+        return;
+      }
+
+      setCameraNoticeError(null);
       const reader = new FileReader();
       reader.onload = (event) => {
         const dataUrl = event.target?.result as string;
         if (dataUrl) {
+          const dataValidation = validateWorkPhotoInput(dataUrl);
+          if (!dataValidation.valid) {
+            setCameraNoticeError(dataValidation.error || 'Invalid image data.');
+            return;
+          }
           setPendingPhotoDataUrl(dataUrl);
           setPendingCapturedAt(new Date().toISOString());
           setSelectedCategory('');
           setWorkDescription('');
         }
       };
+      reader.onerror = () => {
+        setCameraNoticeError('Failed to read selected image file.');
+      };
       reader.readAsDataURL(file);
     } catch (err) {
       console.error('Error reading gallery file:', err);
+      setCameraNoticeError(err instanceof Error ? err.message : 'Failed to load image file.');
     } finally {
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
@@ -191,12 +405,13 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
     }
   };
 
-  // Step 5: Retake Photo (Discard and return to camera)
+  // Step 5: Retake Photo (Discard and return to live camera without requesting duplicate permissions)
   const handleRetakePhoto = () => {
     setPendingPhotoDataUrl(null);
     setPendingCapturedAt('');
     setSelectedCategory('');
     setWorkDescription('');
+    setCameraNoticeError(null);
   };
 
   // Step 5: Save Work Evidence (1 Photo = 1 Work Record)
@@ -204,15 +419,25 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
     if (!pendingPhotoDataUrl || isProcessing) return;
 
     setIsProcessing(true);
+    setCameraNoticeError(null);
     try {
-      // 1. Compress & Upload photo
+      const recordId = `rec_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+      // 1. Compress & Upload photo (stores compressed image in IndexedDB before marking queued)
       const photo = await processAndUploadWorkPhoto(pendingPhotoDataUrl, {
         description: workDescription.trim() || selectedCategory || 'Work Evidence Photo',
         capturedAt: pendingCapturedAt || new Date().toISOString(),
         date: selectedDate,
+        activityId: recordId,
         cloudName: userProfile.cloudinaryCloudName,
         uploadPreset: userProfile.cloudinaryUploadPreset,
       });
+
+      // If offline storage failed completely and no image URL could be saved, keep the form data for retry
+      if (photo.syncStatus === 'failed' && !photo.imageUrl && !photo.localDataUrl) {
+        setCameraNoticeError(photo.error || t.storageFullWarning);
+        return;
+      }
 
       // 2. Format times
       const now = new Date();
@@ -237,7 +462,6 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
       }
 
       // 4. Construct the One Photo = One Work Record
-      const recordId = `rec_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       const newRecord: WorkActivity = {
         id: recordId,
         reportDate: selectedDate,
@@ -270,23 +494,34 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
         if (res === false) localSuccess = false;
       }
 
-      // 6. Reset capture state & show brief success toast only if local save succeeded
+      // 6. Only clear captured image and return to live camera after save succeeds
       if (localSuccess !== false) {
         setPendingPhotoDataUrl(null);
         setPendingCapturedAt('');
         setSelectedCategory('');
         setWorkDescription('');
 
-        setSaveSuccessNotice(t.savedWorkEvidenceSuccess);
-        setTimeout(() => setSaveSuccessNotice(null), 3000);
+        if (photo.syncStatus === 'failed') {
+          setCameraNoticeError(photo.error || t.storageFullWarning);
+        } else {
+          setSaveSuccessNotice(t.savedWorkEvidenceSuccess);
+          setTimeout(() => {
+            if (isMountedRef.current) {
+              setSaveSuccessNotice(null);
+            }
+          }, 3000);
+        }
       } else {
-        setSaveSuccessNotice(t.storageFullWarning);
-        setTimeout(() => setSaveSuccessNotice(null), 4000);
+        // Keep pendingPhotoDataUrl, selectedCategory, and workDescription so the user can retry saving
+        setCameraNoticeError(t.storageFullWarning);
       }
     } catch (err) {
       console.error('Error saving work evidence record:', err);
+      setCameraNoticeError(err instanceof Error ? err.message : t.storageFullWarning);
     } finally {
-      setIsProcessing(false);
+      if (isMountedRef.current) {
+        setIsProcessing(false);
+      }
     }
   };
 
@@ -322,10 +557,13 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
     if (res !== false) {
       setEditingRecord(null);
       setSaveSuccessNotice(t.savedWorkEvidenceSuccess);
-      setTimeout(() => setSaveSuccessNotice(null), 3000);
+      setTimeout(() => {
+        if (isMountedRef.current) {
+          setSaveSuccessNotice(null);
+        }
+      }, 3000);
     } else {
-      setSaveSuccessNotice(t.storageFullWarning);
-      setTimeout(() => setSaveSuccessNotice(null), 4000);
+      setCameraNoticeError(t.storageFullWarning);
     }
   };
 
@@ -390,6 +628,23 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
         <div className="bg-emerald-600 text-white text-xs font-bold py-2.5 px-4 text-center flex items-center justify-center gap-2 animate-fadeIn shadow-md">
           <Check size={16} />
           <span>{saveSuccessNotice}</span>
+        </div>
+      )}
+
+      {/* Error / Offline Storage Warning Banner */}
+      {cameraNoticeError && (
+        <div className="bg-rose-600 text-white text-xs font-bold py-2.5 px-4 flex items-center justify-between gap-2 animate-fadeIn shadow-md">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={16} className="shrink-0" />
+            <span>{cameraNoticeError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCameraNoticeError(null)}
+            className="px-2 py-0.5 rounded bg-white/15 hover:bg-white/25 text-[10px]"
+          >
+            ✕
+          </button>
         </div>
       )}
 
@@ -526,10 +781,19 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-100 text-sm">{t.cameraPermissionDenied}</h3>
-                  <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">{t.cameraPermissionHint}</p>
+                  <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">{cameraError || t.cameraPermissionHint}</p>
                 </div>
-                <div className="pt-2">
+                <div className="pt-2 flex items-center justify-center gap-2 flex-wrap">
                   <button
+                    type="button"
+                    onClick={() => startCamera(facingMode, { forceRestart: true })}
+                    className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium text-xs inline-flex items-center gap-2 border border-slate-700"
+                  >
+                    <RefreshCw size={15} />
+                    <span>{language === 'km' ? 'ព្យាយាមបើកកាមេរ៉ាម្តងទៀត' : 'Retry Camera'}</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => fileInputRef.current?.click()}
                     className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs inline-flex items-center gap-2 shadow-lg shadow-indigo-600/30"
                   >
@@ -542,10 +806,16 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
               <div className="relative w-full aspect-[4/3] sm:aspect-[16/9] bg-black rounded-2xl overflow-hidden shadow-2xl border border-slate-800 flex items-center justify-center">
                 {/* Live Video */}
                 <video
-                  ref={videoRef}
+                  ref={handleVideoElementRef}
                   autoPlay
                   playsInline
                   muted
+                  onCanPlay={(e) => {
+                    const video = e.currentTarget;
+                    if (video.paused) {
+                      video.play().catch(() => {});
+                    }
+                  }}
                   className={`w-full h-full object-cover ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`}
                 />
 
@@ -642,13 +912,16 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
           {existingActivities.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
               {existingActivities.map((rec, idx) => {
-                const photoSrc =
-                  rec.imageUrl ||
-                  rec.thumbnailUrl ||
-                  (rec.photos && rec.photos.length > 0 ? (rec.photos[0].thumbnailUrl || rec.photos[0].imageUrl) : '');
-
+                const primaryPhoto = rec.photos && rec.photos.length > 0 ? rec.photos[0] : undefined;
                 const categoryText = rec.workCategory || rec.category;
-                const isSkipped = !rec.workCategory || rec.workCategory === 'Other' || !rec.workCategory;
+                const isPhotoUploading =
+                  primaryPhoto?.syncStatus === 'uploading' || primaryPhoto?.uploadStatus === 'uploading';
+                const isPhotoFailed =
+                  primaryPhoto?.syncStatus === 'failed' || primaryPhoto?.uploadStatus === 'failed';
+                const isPhotoPending =
+                  primaryPhoto?.syncStatus === 'pending' ||
+                  primaryPhoto?.uploadStatus === 'queued' ||
+                  (!rec.imageUrl && !primaryPhoto?.imageUrl);
 
                 return (
                   <div
@@ -658,18 +931,17 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
                   >
                     {/* Thumbnail */}
                     <div className="relative w-16 h-16 rounded-lg overflow-hidden bg-black border border-slate-700 shrink-0">
-                      {photoSrc ? (
-                        <img
-                          src={photoSrc}
-                          alt={rec.description || 'Evidence'}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-slate-600">
-                          <ImageIcon size={20} />
-                        </div>
-                      )}
+                      <PhotoImage
+                        photoId={primaryPhoto?.photoId}
+                        imageUrl={primaryPhoto?.imageUrl || rec.imageUrl}
+                        thumbnailUrl={primaryPhoto?.thumbnailUrl || rec.thumbnailUrl}
+                        localDataUrl={primaryPhoto?.localDataUrl}
+                        syncStatus={primaryPhoto?.syncStatus}
+                        uploadStatus={primaryPhoto?.uploadStatus}
+                        alt={rec.description || 'Evidence'}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                        lang={language}
+                      />
                       <div className="absolute top-0.5 left-0.5 bg-black/80 text-white font-mono text-[9px] px-1 rounded">
                         #{idx + 1}
                       </div>
@@ -689,11 +961,28 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
                           </span>
                         )}
 
-                        {/* Saved Status Indicator */}
-                        <span className="text-[9px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-800/50 px-1.5 py-0.5 rounded flex items-center gap-0.5">
-                          <Check size={9} />
-                          {t.savedStatus}
-                        </span>
+                        {/* Saved / Sync Status Indicator */}
+                        {isPhotoUploading ? (
+                          <span className="text-[9px] font-bold text-blue-300 bg-blue-950/70 border border-blue-800/60 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                            <RefreshCw size={9} className="animate-spin" />
+                            {t.uploadingPhoto || 'Uploading'}
+                          </span>
+                        ) : isPhotoFailed ? (
+                          <span className="text-[9px] font-bold text-rose-300 bg-rose-950/70 border border-rose-800/60 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                            <AlertCircle size={9} />
+                            {t.uploadFailed || 'Failed'}
+                          </span>
+                        ) : isPhotoPending ? (
+                          <span className="text-[9px] font-bold text-amber-300 bg-amber-950/70 border border-amber-800/60 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                            <Clock size={9} />
+                            {t.waitingToUpload || 'Pending'}
+                          </span>
+                        ) : (
+                          <span className="text-[9px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-800/50 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                            <Check size={9} />
+                            {t.savedStatus}
+                          </span>
+                        )}
                       </div>
 
                       {/* Work Description */}
@@ -779,16 +1068,22 @@ export const WorkCamera: React.FC<WorkCameraProps> = ({
 
             {/* Photo preview */}
             {(() => {
-              const editSrc = safeImgSrc(editingRecord.imageUrl || editingRecord.thumbnailUrl || (editingRecord.photos?.[0]?.imageUrl ?? ''));
-              return editSrc ? (
+              const primaryPhoto = editingRecord.photos?.[0];
+              return (
                 <div className="w-full h-44 rounded-xl overflow-hidden bg-black border border-slate-800 flex items-center justify-center">
-                  <img
-                    src={editSrc}
-                    alt={editingRecord.description}
+                  <PhotoImage
+                    photoId={primaryPhoto?.photoId}
+                    imageUrl={primaryPhoto?.imageUrl || editingRecord.imageUrl}
+                    thumbnailUrl={primaryPhoto?.thumbnailUrl || editingRecord.thumbnailUrl}
+                    localDataUrl={primaryPhoto?.localDataUrl}
+                    syncStatus={primaryPhoto?.syncStatus}
+                    uploadStatus={primaryPhoto?.uploadStatus}
+                    alt={editingRecord.description || 'Evidence'}
                     className="w-full h-full object-contain"
+                    lang={language}
                   />
                 </div>
-              ) : null;
+              );
             })()}
 
             {/* Work Category Dropdown */}

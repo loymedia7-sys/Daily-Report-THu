@@ -52,7 +52,8 @@ import {
   clearAllPendingCloudSync,
   FirestoreSyncResult
 } from './utils/firestoreService';
-import { drainUploadQueue } from './utils/imageUploadService';
+import { drainUploadQueue, cleanupOrphanedPhotoCache } from './utils/imageUploadService';
+import { collectReferencedPhotoIds } from './utils/workEvidenceService';
 import { TRANSLATIONS } from './utils/translations';
 
 import { DesktopSidebar } from './components/navigation/DesktopSidebar';
@@ -91,16 +92,23 @@ export default function App() {
   const t = TRANSLATIONS[currentLanguage] || TRANSLATIONS.en;
   const [saveWarning, setSaveWarning] = useState<string | null>(null);
 
-  // PWA Install Hook
+  // PWA Install & Update Hook
   const {
-    canInstall,
     deferredPromptAvailable,
     isInstalled,
     isIOS,
+    isIPad,
+    isAndroid,
+    isSafari,
+    isIOSNonSafari,
+    browserName,
     isInstallModalOpen,
     openInstallModal,
     closeInstallModal,
     triggerInstall,
+    isUpdateAvailable,
+    applyUpdate,
+    dismissUpdateBanner,
   } = usePWAInstall();
 
   // Firebase Auth state
@@ -790,48 +798,105 @@ export default function App() {
     });
   };
 
-  const handlePhotoSynced = useCallback(async (photoId: string, cloudUrl: string, thumbnailUrl: string): Promise<boolean> => {
+  const handlePhotoSynced = useCallback(async (
+    photoId: string,
+    cloudUrl: string,
+    thumbnailUrl: string,
+    queuedDate?: string,
+    queuedActivityId?: string
+  ): Promise<boolean> => {
     const prev = appStateRef.current;
     const updatedReports = { ...prev.reports };
     let targetDate: string | null = null;
 
-    for (const dKey of Object.keys(updatedReports)) {
-      const rep = updatedReports[dKey];
+    // 1. Check queuedDate first if provided
+    if (queuedDate && updatedReports[queuedDate]) {
+      const rep = updatedReports[queuedDate];
       const hasPhoto = (rep.activities || []).some(
-        (act) => (act.photos || []).some((p) => p.photoId === photoId) || act.id === photoId
+        (act) =>
+          (act.photos || []).some((p) => p.photoId === photoId) ||
+          act.id === photoId ||
+          (queuedActivityId && act.id === queuedActivityId)
       );
       if (hasPhoto) {
-        targetDate = dKey;
-        break;
+        targetDate = queuedDate;
       }
     }
 
+    // 2. Search across all dates if not found in queuedDate
     if (!targetDate) {
-      targetDate = selectedDate;
+      for (const dKey of Object.keys(updatedReports)) {
+        const rep = updatedReports[dKey];
+        const hasPhoto = (rep.activities || []).some(
+          (act) =>
+            (act.photos || []).some((p) => p.photoId === photoId) ||
+            act.id === photoId ||
+            (queuedActivityId && act.id === queuedActivityId)
+        );
+        if (hasPhoto) {
+          targetDate = dKey;
+          break;
+        }
+      }
     }
 
-    const rep = updatedReports[targetDate] || createNewDayReport(targetDate, prev.defaultSchedule, prev.userProfile);
+    // If the photo record does not exist in any report yet, return false so the queue item is preserved
+    if (!targetDate) {
+      return false;
+    }
+
+    const rep = updatedReports[targetDate];
+    let didUpdateRecord = false;
+    const nowIso = new Date().toISOString();
+
     const updatedActivities = (rep.activities || []).map((act) => {
       const photos = act.photos || [];
-      const matchedPhoto = photos.some((p) => p.photoId === photoId) || act.id === photoId;
-      const updatedPhotos = photos.map((p) =>
-        p.photoId === photoId
-          ? { ...p, imageUrl: cloudUrl, thumbnailUrl, syncStatus: 'synced' as const, uploadedAt: new Date().toISOString() }
-          : p
-      );
-      const shouldUpdateCover = act.id === photoId || (matchedPhoto && (photos[0]?.photoId === photoId || !act.imageUrl));
+      const hasMatchingPhoto = photos.some((p) => p.photoId === photoId);
+      const isMatchingActivity = act.id === photoId || (Boolean(queuedActivityId) && act.id === queuedActivityId);
+
+      if (!hasMatchingPhoto && !isMatchingActivity) {
+        return act;
+      }
+
+      didUpdateRecord = true;
+      const updatedPhotos = hasMatchingPhoto
+        ? photos.map((p) =>
+            p.photoId === photoId
+              ? {
+                  ...p,
+                  imageUrl: cloudUrl,
+                  thumbnailUrl: thumbnailUrl || cloudUrl,
+                  syncStatus: 'synced' as const,
+                  uploadStatus: 'uploaded' as const,
+                  uploadedAt: nowIso,
+                  error: undefined,
+                }
+              : p
+          )
+        : photos;
+
+      const shouldUpdateCover =
+        isMatchingActivity ||
+        photos[0]?.photoId === photoId ||
+        !act.imageUrl;
+
       return {
         ...act,
         photos: updatedPhotos,
         imageUrl: shouldUpdateCover ? cloudUrl : act.imageUrl,
-        thumbnailUrl: shouldUpdateCover ? thumbnailUrl : act.thumbnailUrl,
+        thumbnailUrl: shouldUpdateCover ? (thumbnailUrl || cloudUrl) : act.thumbnailUrl,
+        updatedAt: nowIso,
       };
     });
+
+    if (!didUpdateRecord) {
+      return false;
+    }
 
     const updatedReport: DayReport = {
       ...rep,
       activities: updatedActivities,
-      lastUpdated: new Date().toISOString(),
+      lastUpdated: nowIso,
     };
 
     updatedReports[targetDate] = updatedReport;
@@ -850,41 +915,50 @@ export default function App() {
     setAppState(nextState);
     enqueuePendingReportSync(updatedReport);
 
-    if (authUser) {
-      const cloudRes = await saveDayReportToFirestore(authUser.uid, updatedReport);
-      if (!cloudRes.success) {
-        setSaveWarning(t.cloudSaveFailedWarning);
-      }
+    // Wait for Firestore confirmation before removing the queued item from IndexedDB
+    if (!authUser) {
+      return false;
     }
-    return true;
-  }, [authUser, selectedDate, t.storageFullWarning, t.cloudSaveFailedWarning]);
 
-  // Drain photo upload queue & flush pending cloud writes on app start (after auth) and on 'online'
+    const cloudRes = await saveDayReportToFirestore(authUser.uid, updatedReport);
+    if (!cloudRes.success) {
+      setSaveWarning(
+        cloudRes.code === 'offline'
+          ? `${t.cloudSaveFailedWarning} (${t.stepSavedOffline})`
+          : t.cloudSaveFailedWarning
+      );
+      return false;
+    }
+
+    return true;
+  }, [authUser, t.storageFullWarning, t.cloudSaveFailedWarning, t.stepSavedOffline]);
+
+  // Centralized photo upload queue drain & pending cloud sync on auth/startup and 'online' events
   useEffect(() => {
-    if (authUser) {
-      flushPendingCloudSync(authUser.uid)
-        .then((res) => {
+    const syncAll = async () => {
+      if (authUser) {
+        try {
+          const res = await flushPendingCloudSync(authUser.uid);
           if (res.success) {
             setSaveWarning(null);
           }
-        })
-        .catch(console.error);
-      drainUploadQueue(handlePhotoSynced).catch(console.error);
-    }
-  }, [authUser, handlePhotoSynced]);
-
-  useEffect(() => {
-    const handleOnline = () => {
-      if (authUser) {
-        flushPendingCloudSync(authUser.uid)
-          .then((res) => {
-            if (res.success) {
-              setSaveWarning(null);
-            }
-          })
-          .catch(console.error);
+        } catch (err) {
+          console.error('Error flushing pending cloud sync:', err);
+        }
       }
-      drainUploadQueue(handlePhotoSynced).catch(console.error);
+      try {
+        await drainUploadQueue(handlePhotoSynced);
+        const referencedIds = collectReferencedPhotoIds(appStateRef.current.reports);
+        await cleanupOrphanedPhotoCache(referencedIds);
+      } catch (err) {
+        console.error('Error draining photo upload queue:', err);
+      }
+    };
+
+    syncAll();
+
+    const handleOnline = () => {
+      syncAll();
     };
     window.addEventListener('online', handleOnline);
     return () => window.removeEventListener('online', handleOnline);
@@ -1007,6 +1081,35 @@ export default function App() {
       {/* 2. Main Content Container */}
       <div className="flex-1 flex flex-col min-w-0 min-h-screen pb-20 md:pb-6">
         
+        {/* Non-intrusive PWA Update Available Banner */}
+        {isUpdateAvailable && (
+          <div className="bg-indigo-950 text-white px-4 py-2.5 text-xs flex items-center justify-between gap-3 shadow-md z-40 animate-fadeIn">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+              <span className="font-semibold truncate">
+                {currentLanguage === 'km'
+                  ? 'មានកំណែទម្រង់ថ្មីនៃកម្មវិធី! ចុចដើម្បីធ្វើបច្ចុប្បន្នភាព។'
+                  : 'A new version of the app is available.'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={applyUpdate}
+                className="bg-indigo-500 hover:bg-indigo-400 text-white px-3 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+              >
+                {currentLanguage === 'km' ? 'ធ្វើបច្ចុប្បន្នភាពឥឡូវនេះ' : 'Update Now'}
+              </button>
+              <button
+                onClick={dismissUpdateBanner}
+                className="text-slate-300 hover:text-white px-1.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                aria-label="Dismiss update notification"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Visible warning banner for storage full or cloud save failure */}
         {saveWarning && (
           <div className="bg-amber-500 text-slate-950 px-4 py-3 font-bold text-xs flex items-center justify-between shadow-lg z-50 animate-fadeIn">
@@ -1249,6 +1352,8 @@ export default function App() {
         appState={appState}
         onRestoreState={handleRestoreState}
         onResetAllData={handleResetAllData}
+        onOpenInstallModal={openInstallModal}
+        isInstalled={isInstalled}
         language={currentLanguage}
       />
 
@@ -1269,6 +1374,11 @@ export default function App() {
         onNativeInstall={triggerInstall}
         deferredPromptAvailable={deferredPromptAvailable}
         isIOS={isIOS}
+        isIPad={isIPad}
+        isAndroid={isAndroid}
+        isSafari={isSafari}
+        isIOSNonSafari={isIOSNonSafari}
+        browserName={browserName}
         isInstalled={isInstalled}
         userProfile={appState.userProfile}
       />

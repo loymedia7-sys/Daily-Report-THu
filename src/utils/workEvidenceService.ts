@@ -1,4 +1,4 @@
-import { WorkActivity, WorkActivityPhoto, WorkCategory, ActivityStatus } from '../types/workReport';
+import { WorkActivity } from '../types/workReport';
 import { DayReport } from '../types';
 
 export function createNewWorkActivity(
@@ -47,6 +47,31 @@ export function countEvidencePhotosInReport(report: DayReport): number {
     const photoCount = act.photos && act.photos.length > 0 ? act.photos.length : (act.imageUrl ? 1 : 0);
     return sum + photoCount;
   }, 0);
+}
+
+/**
+ * Collects all photoIds referenced by any activity across all reports
+ * so cleanup never deletes images still referenced by historical or current reports.
+ */
+export function collectReferencedPhotoIds(reports: Record<string, DayReport>): Set<string> {
+  const ids = new Set<string>();
+  if (!reports || typeof reports !== 'object') return ids;
+
+  for (const dateKey of Object.keys(reports)) {
+    const rep = reports[dateKey];
+    if (!rep || !Array.isArray(rep.activities)) continue;
+    for (const act of rep.activities) {
+      if (act.id) ids.add(act.id);
+      if (Array.isArray(act.photos)) {
+        for (const p of act.photos) {
+          if (p && p.photoId) {
+            ids.add(p.photoId);
+          }
+        }
+      }
+    }
+  }
+  return ids;
 }
 
 /**

@@ -16,7 +16,9 @@ import {
   Loader2,
   RotateCcw,
   AlertTriangle,
-  Languages
+  Languages,
+  Smartphone,
+  CheckCircle2
 } from 'lucide-react';
 import { UserProfile, AppState, Language } from '../types';
 import { APPS_SCRIPT_SNIPPET } from '../utils/googleSheetsSync';
@@ -34,6 +36,8 @@ interface SettingsModalProps {
   appState: AppState;
   onRestoreState: (state: AppState) => void;
   onResetAllData?: () => Promise< { success: boolean; error?: string } | void>;
+  onOpenInstallModal?: () => void;
+  isInstalled?: boolean;
   language?: Language;
 }
 
@@ -45,6 +49,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   appState,
   onRestoreState,
   onResetAllData,
+  onOpenInstallModal,
+  isInstalled = false,
   language = 'en',
 }) => {
   const t = TRANSLATIONS[language] || TRANSLATIONS.en;
@@ -264,6 +270,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Mobile App Installation & Home Screen Guide */}
+          {onOpenInstallModal && (
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${isInstalled ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-700'}`}>
+                  {isInstalled ? <CheckCircle2 className="w-4 h-4" /> : <Smartphone className="w-4 h-4" />}
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-xs font-bold text-slate-900">
+                    {language === 'km' ? 'ដំឡើងកម្មវិធីលើអេក្រង់ដើម (PWA)' : 'Mobile App & Home Screen Installation'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 truncate">
+                    {isInstalled
+                      ? (language === 'km' ? 'បានដំឡើងរួចរាល់ (Standalone Mode)' : 'Installed & running in full-screen standalone mode')
+                      : (language === 'km' ? 'ដំឡើងលើ iPhone, iPad, Android ឬកុំព្យូទ័រ' : 'Install on iPhone, iPad, Android, or Desktop')}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenInstallModal();
+                }}
+                className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-2xs transition-all shrink-0 cursor-pointer"
+              >
+                {isInstalled
+                  ? (language === 'km' ? 'មើលស្ថានភាព' : 'View Status')
+                  : (language === 'km' ? 'របៀបដំឡើង' : 'Install Guide')}
+              </button>
+            </div>
+          )}
+
 
           {/* Company Branding & Logo Upload Section */}
           <div className="p-4 bg-indigo-50/60 rounded-2xl border border-indigo-200/80 space-y-4">
