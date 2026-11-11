@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   AppState,
   DayReport,
@@ -43,7 +43,14 @@ import {
   subscribeToTemplates,
   subscribeToReports,
   seedInitialFirestoreData,
-  resetAllFirestoreUserData
+  resetAllFirestoreUserData,
+  mergeCloudAndLocalReports,
+  flushPendingCloudSync,
+  enqueuePendingReportSync,
+  enqueuePendingProfileSync,
+  enqueuePendingTemplatesSync,
+  clearAllPendingCloudSync,
+  FirestoreSyncResult
 } from './utils/firestoreService';
 import { drainUploadQueue } from './utils/imageUploadService';
 import { TRANSLATIONS } from './utils/translations';
@@ -73,6 +80,9 @@ import confetti from 'canvas-confetti';
 
 export default function App() {
   const [appState, setAppState] = useState<AppState>(() => loadAppState());
+  const appStateRef = useRef<AppState>(appState);
+  appStateRef.current = appState;
+
   const [selectedDate, setSelectedDate] = useState<string>(() => formatDateKey(new Date()));
   const [currentNavView, setCurrentNavView] = useState<MainNavView>('dashboard');
   const [currentView, setCurrentView] = useState<'checklist' | 'summary'>('checklist');
@@ -116,8 +126,11 @@ export default function App() {
         };
         setAuthUser(authData);
 
-        // Seed initial data if first time user on Cloud
-        await seedInitialFirestoreData(user.uid, appState);
+        // Seed initial data if first time user on Cloud (using latest ref state)
+        const seedRes = await seedInitialFirestoreData(user.uid, appStateRef.current);
+        if (!seedRes.success && seedRes.code !== 'offline') {
+          setSaveWarning(`${t.cloudSaveFailedWarning}${seedRes.error ? `: ${seedRes.error}` : ''}`);
+        }
       } else {
         // Automatically establish Firebase session so user is always on Firebase
         loginAnonymously().catch(() => {});
@@ -125,7 +138,7 @@ export default function App() {
     });
 
     return () => unsubscribeAuth();
-  }, []);
+  }, [t.cloudSaveFailedWarning]);
 
   // Realtime Firestore listeners when logged in
   useEffect(() => {
@@ -133,37 +146,78 @@ export default function App() {
 
     setIsSyncing(true);
 
-    const unsubProfile = subscribeToUserProfile(authUser.uid, (cloudProfile) => {
-      if (cloudProfile) {
-        setAppState((prev) => ({ ...prev, userProfile: cloudProfile }));
-        if (cloudProfile.companyLogoUrl) {
-          updatePwaManifestAndIcons(cloudProfile.companyLogoUrl, cloudProfile.companyName);
+    const unsubProfile = subscribeToUserProfile(
+      authUser.uid,
+      (cloudProfile) => {
+        if (cloudProfile) {
+          setAppState((prev) => {
+            if (JSON.stringify(prev.userProfile) === JSON.stringify(cloudProfile)) {
+              return prev;
+            }
+            const next = { ...prev, userProfile: cloudProfile };
+            appStateRef.current = next;
+            return next;
+          });
+          if (cloudProfile.companyLogoUrl) {
+            updatePwaManifestAndIcons(cloudProfile.companyLogoUrl, cloudProfile.companyName);
+          }
         }
+      },
+      (err) => {
+        setIsSyncing(false);
+        setSaveWarning(`${t.cloudSaveFailedWarning}: ${err.message}`);
       }
-    });
+    );
 
-    const unsubTemplates = subscribeToTemplates(authUser.uid, (cloudTemplates) => {
-      if (cloudTemplates && cloudTemplates.length > 0) {
-        setAppState((prev) => ({ ...prev, defaultSchedule: cloudTemplates }));
+    const unsubTemplates = subscribeToTemplates(
+      authUser.uid,
+      (cloudTemplates) => {
+        if (cloudTemplates && cloudTemplates.length > 0) {
+          setAppState((prev) => {
+            if (JSON.stringify(prev.defaultSchedule) === JSON.stringify(cloudTemplates)) {
+              return prev;
+            }
+            const next = { ...prev, defaultSchedule: cloudTemplates };
+            appStateRef.current = next;
+            return next;
+          });
+        }
+      },
+      (err) => {
+        setIsSyncing(false);
+        setSaveWarning(`${t.cloudSaveFailedWarning}: ${err.message}`);
       }
-    });
+    );
 
-    const unsubReports = subscribeToReports(authUser.uid, (cloudReports) => {
-      if (cloudReports && Object.keys(cloudReports).length > 0) {
-        setAppState((prev) => ({
-          ...prev,
-          reports: { ...prev.reports, ...cloudReports },
-        }));
+    const unsubReports = subscribeToReports(
+      authUser.uid,
+      (cloudReports) => {
+        if (cloudReports && Object.keys(cloudReports).length > 0) {
+          setAppState((prev) => {
+            const { merged, changed } = mergeCloudAndLocalReports(prev.reports, cloudReports);
+            if (!changed) return prev;
+            const next = {
+              ...prev,
+              reports: merged,
+            };
+            appStateRef.current = next;
+            return next;
+          });
+        }
+        setIsSyncing(false);
+      },
+      (err) => {
+        setIsSyncing(false);
+        setSaveWarning(`${t.cloudSaveFailedWarning}: ${err.message}`);
       }
-      setIsSyncing(false);
-    });
+    );
 
     return () => {
       unsubProfile();
       unsubTemplates();
       unsubReports();
     };
-  }, [authUser?.uid]);
+  }, [authUser?.uid, t.cloudSaveFailedWarning]);
 
   // Save to LocalStorage whenever appState changes
   useEffect(() => {
@@ -189,35 +243,57 @@ export default function App() {
     return formatFullDateHeader(selectedDate);
   }, [selectedDate]);
 
-  // Helpers to update day report
-  const updateCurrentReport = async (updater: (prevReport: DayReport) => DayReport): Promise<boolean> => {
-    const updated = updater(currentReport);
-    const nextAppState = {
-      ...appState,
+  // Conflict-safe helper to update day report without stale React closure races
+  const updateCurrentReport = useCallback(async (updater: (prevReport: DayReport) => DayReport): Promise<boolean> => {
+    const latestState = appStateRef.current;
+    const baseReport =
+      latestState.reports[selectedDate] ||
+      createNewDayReport(selectedDate, latestState.defaultSchedule, latestState.userProfile);
+
+    const updated: DayReport = {
+      ...updater(baseReport),
+      date: selectedDate,
+      lastUpdated: new Date().toISOString(),
+    };
+
+    const nextAppState: AppState = {
+      ...latestState,
       reports: {
-        ...appState.reports,
+        ...latestState.reports,
         [selectedDate]: updated,
       },
     };
+
+    // 1. Save locally first
     const localSuccess = saveAppState(nextAppState);
     if (!localSuccess) {
       setSaveWarning(t.storageFullWarning);
       return false;
-    } else {
-      setSaveWarning(null);
     }
 
+    // 2. Update ref and React state synchronously so rapid updates never overwrite each other
+    appStateRef.current = nextAppState;
     setAppState(nextAppState);
+    setSaveWarning(null);
+
+    // 3. Queue for cloud sync before network request so offline/interrupted saves are never lost
+    enqueuePendingReportSync(updated);
 
     if (authUser) {
-      const cloudSuccess = await saveDayReportToFirestore(authUser.uid, updated);
-      if (!cloudSuccess) {
-        setSaveWarning(t.cloudSaveFailedWarning);
-        return false;
+      const cloudRes = await saveDayReportToFirestore(authUser.uid, updated);
+      if (!cloudRes.success) {
+        setSaveWarning(
+          cloudRes.code === 'offline'
+            ? `${t.cloudSaveFailedWarning} (${t.stepSavedOffline})`
+            : t.cloudSaveFailedWarning
+        );
+        if (cloudRes.code === 'payload-too-large') {
+          return false;
+        }
       }
     }
     return true;
-  };
+  }, [selectedDate, authUser, t.storageFullWarning, t.cloudSaveFailedWarning, t.stepSavedOffline]);
 
   // ==========================================
   // Attendance: Check-In (វត្តមាន) & Permission Handlers
@@ -424,15 +500,8 @@ export default function App() {
         daysOfWeek: daysOfWeek,
       };
 
-      const updatedSchedule = [...appState.defaultSchedule, newTemplate];
-      setAppState((prev) => ({
-        ...prev,
-        defaultSchedule: updatedSchedule,
-      }));
-
-      if (authUser) {
-        saveTemplatesToFirestore(authUser.uid, updatedSchedule);
-      }
+      const updatedSchedule = [...appStateRef.current.defaultSchedule, newTemplate];
+      handleSaveScheduleTemplate(updatedSchedule);
     }
   };
 
@@ -475,7 +544,7 @@ export default function App() {
   };
 
   const handleOverrideHoliday = () => {
-    const templateTasks: ScheduleTask[] = appState.defaultSchedule.map((item) => ({
+    const templateTasks: ScheduleTask[] = appStateRef.current.defaultSchedule.map((item) => ({
       id: `task_${Date.now()}_${item.id}`,
       timeSlot: item.timeSlot,
       taskName: item.taskName,
@@ -539,31 +608,67 @@ export default function App() {
   };
 
   // Template Save
-  const handleSaveScheduleTemplate = (newSchedule: DefaultTimeSlotTemplate[]) => {
-    setAppState((prev) => ({
-      ...prev,
+  const handleSaveScheduleTemplate = async (newSchedule: DefaultTimeSlotTemplate[]): Promise<boolean> => {
+    const nextState: AppState = {
+      ...appStateRef.current,
       defaultSchedule: newSchedule,
-    }));
+    };
+
+    const localSuccess = saveAppState(nextState);
+    if (!localSuccess) {
+      setSaveWarning(t.storageFullWarning);
+      return false;
+    }
+
+    appStateRef.current = nextState;
+    setAppState(nextState);
+    enqueuePendingTemplatesSync(newSchedule);
 
     if (authUser) {
-      saveTemplatesToFirestore(authUser.uid, newSchedule);
+      const res = await saveTemplatesToFirestore(authUser.uid, newSchedule);
+      if (!res.success) {
+        setSaveWarning(
+          res.code === 'offline'
+            ? `${t.cloudSaveFailedWarning} (${t.stepSavedOffline})`
+            : t.cloudSaveFailedWarning
+        );
+      }
     }
+    return true;
   };
 
   // Profile Save
-  const handleSaveProfile = (newProfile: UserProfile) => {
-    setAppState((prev) => ({
-      ...prev,
+  const handleSaveProfile = async (newProfile: UserProfile): Promise<boolean> => {
+    const nextState: AppState = {
+      ...appStateRef.current,
       userProfile: newProfile,
-    }));
+    };
+
+    const localSuccess = saveAppState(nextState);
+    if (!localSuccess) {
+      setSaveWarning(t.storageFullWarning);
+      return false;
+    }
+
+    appStateRef.current = nextState;
+    setAppState(nextState);
+    enqueuePendingProfileSync(newProfile);
 
     if (newProfile.companyLogoUrl) {
       updatePwaManifestAndIcons(newProfile.companyLogoUrl, newProfile.companyName);
     }
 
     if (authUser) {
-      saveUserProfileToFirestore(authUser.uid, newProfile);
+      const res = await saveUserProfileToFirestore(authUser.uid, newProfile);
+      if (!res.success) {
+        setSaveWarning(
+          res.code === 'offline'
+            ? `${t.cloudSaveFailedWarning} (${t.stepSavedOffline})`
+            : t.cloudSaveFailedWarning
+        );
+      }
     }
+    return true;
   };
 
   // Import Tasks
@@ -589,18 +694,48 @@ export default function App() {
   };
 
   // Restore State & Reset Data
-  const handleRestoreState = (restored: AppState) => {
+  const handleRestoreState = async (restored: AppState): Promise<boolean> => {
+    const localSuccess = saveAppState(restored);
+    if (!localSuccess) {
+      setSaveWarning(t.storageFullWarning);
+      return false;
+    }
+    appStateRef.current = restored;
     setAppState(restored);
-    saveAppState(restored);
+    enqueuePendingProfileSync(restored.userProfile);
+    enqueuePendingTemplatesSync(restored.defaultSchedule);
+    for (const dateKey of Object.keys(restored.reports)) {
+      enqueuePendingReportSync(restored.reports[dateKey]);
+    }
+    if (authUser) {
+      const flushRes = await flushPendingCloudSync(authUser.uid);
+      if (!flushRes.success) {
+        setSaveWarning(t.cloudSaveFailedWarning);
+      }
+    }
+    return true;
   };
 
-  const handleResetAllData = async () => {
+  const handleResetAllData = async (): Promise<FirestoreSyncResult> => {
     const fresh = getFreshInitialState();
     if (authUser) {
-      await resetAllFirestoreUserData(authUser.uid, fresh);
+      setIsSyncing(true);
+      const cloudRes = await resetAllFirestoreUserData(authUser.uid, fresh);
+      setIsSyncing(false);
+      if (!cloudRes.success) {
+        const errMsg = cloudRes.error || t.cloudSaveFailedWarning;
+        setSaveWarning(`${t.cloudSaveFailedWarning}: ${errMsg}`);
+        return cloudRes;
+      }
+    } else {
+      clearAllPendingCloudSync();
     }
-    resetAppState();
-    setAppState(fresh);
+
+    const localFresh = resetAppState();
+    appStateRef.current = localFresh;
+    setAppState(localFresh);
+    setSaveWarning(null);
+    return { success: true };
   };
 
   // ==========================================
@@ -655,77 +790,105 @@ export default function App() {
     });
   };
 
-  const handlePhotoSynced = useCallback((photoId: string, cloudUrl: string, thumbnailUrl: string) => {
-    setAppState((prev) => {
-      const updatedReports = { ...prev.reports };
-      let targetDate: string | null = null;
+  const handlePhotoSynced = useCallback(async (photoId: string, cloudUrl: string, thumbnailUrl: string): Promise<boolean> => {
+    const prev = appStateRef.current;
+    const updatedReports = { ...prev.reports };
+    let targetDate: string | null = null;
 
-      for (const dKey of Object.keys(updatedReports)) {
-        const rep = updatedReports[dKey];
-        const hasPhoto = (rep.activities || []).some(
-          (act) => (act.photos || []).some((p) => p.photoId === photoId) || act.id === photoId
-        );
-        if (hasPhoto) {
-          targetDate = dKey;
-          break;
-        }
+    for (const dKey of Object.keys(updatedReports)) {
+      const rep = updatedReports[dKey];
+      const hasPhoto = (rep.activities || []).some(
+        (act) => (act.photos || []).some((p) => p.photoId === photoId) || act.id === photoId
+      );
+      if (hasPhoto) {
+        targetDate = dKey;
+        break;
       }
+    }
 
-      if (!targetDate) {
-        targetDate = selectedDate;
-      }
+    if (!targetDate) {
+      targetDate = selectedDate;
+    }
 
-      const rep = updatedReports[targetDate] || createNewDayReport(targetDate, prev.defaultSchedule, prev.userProfile);
-      const updatedActivities = (rep.activities || []).map((act) => {
-        const photos = act.photos || [];
-        const matchedPhoto = photos.some((p) => p.photoId === photoId) || act.id === photoId;
-        const updatedPhotos = photos.map((p) =>
-          p.photoId === photoId
-            ? { ...p, imageUrl: cloudUrl, thumbnailUrl, syncStatus: 'synced' as const, uploadedAt: new Date().toISOString() }
-            : p
-        );
-        const shouldUpdateCover = act.id === photoId || (matchedPhoto && (photos[0]?.photoId === photoId || !act.imageUrl));
-        return {
-          ...act,
-          photos: updatedPhotos,
-          imageUrl: shouldUpdateCover ? cloudUrl : act.imageUrl,
-          thumbnailUrl: shouldUpdateCover ? thumbnailUrl : act.thumbnailUrl,
-        };
-      });
-
-      const updatedReport: DayReport = {
-        ...rep,
-        activities: updatedActivities,
-        lastUpdated: new Date().toISOString(),
-      };
-
-      updatedReports[targetDate] = updatedReport;
-
-      if (authUser) {
-        saveDayReportToFirestore(authUser.uid, updatedReport);
-      }
-
+    const rep = updatedReports[targetDate] || createNewDayReport(targetDate, prev.defaultSchedule, prev.userProfile);
+    const updatedActivities = (rep.activities || []).map((act) => {
+      const photos = act.photos || [];
+      const matchedPhoto = photos.some((p) => p.photoId === photoId) || act.id === photoId;
+      const updatedPhotos = photos.map((p) =>
+        p.photoId === photoId
+          ? { ...p, imageUrl: cloudUrl, thumbnailUrl, syncStatus: 'synced' as const, uploadedAt: new Date().toISOString() }
+          : p
+      );
+      const shouldUpdateCover = act.id === photoId || (matchedPhoto && (photos[0]?.photoId === photoId || !act.imageUrl));
       return {
-        ...prev,
-        reports: updatedReports,
+        ...act,
+        photos: updatedPhotos,
+        imageUrl: shouldUpdateCover ? cloudUrl : act.imageUrl,
+        thumbnailUrl: shouldUpdateCover ? thumbnailUrl : act.thumbnailUrl,
       };
     });
-  }, [authUser, selectedDate]);
 
-  // Drain queue on app start (after auth) and window 'online' event
+    const updatedReport: DayReport = {
+      ...rep,
+      activities: updatedActivities,
+      lastUpdated: new Date().toISOString(),
+    };
+
+    updatedReports[targetDate] = updatedReport;
+    const nextState: AppState = {
+      ...prev,
+      reports: updatedReports,
+    };
+
+    const localSuccess = saveAppState(nextState);
+    if (!localSuccess) {
+      setSaveWarning(t.storageFullWarning);
+      return false;
+    }
+
+    appStateRef.current = nextState;
+    setAppState(nextState);
+    enqueuePendingReportSync(updatedReport);
+
+    if (authUser) {
+      const cloudRes = await saveDayReportToFirestore(authUser.uid, updatedReport);
+      if (!cloudRes.success) {
+        setSaveWarning(t.cloudSaveFailedWarning);
+      }
+    }
+    return true;
+  }, [authUser, selectedDate, t.storageFullWarning, t.cloudSaveFailedWarning]);
+
+  // Drain photo upload queue & flush pending cloud writes on app start (after auth) and on 'online'
   useEffect(() => {
     if (authUser) {
+      flushPendingCloudSync(authUser.uid)
+        .then((res) => {
+          if (res.success) {
+            setSaveWarning(null);
+          }
+        })
+        .catch(console.error);
       drainUploadQueue(handlePhotoSynced).catch(console.error);
     }
   }, [authUser, handlePhotoSynced]);
 
   useEffect(() => {
     const handleOnline = () => {
+      if (authUser) {
+        flushPendingCloudSync(authUser.uid)
+          .then((res) => {
+            if (res.success) {
+              setSaveWarning(null);
+            }
+          })
+          .catch(console.error);
+      }
       drainUploadQueue(handlePhotoSynced).catch(console.error);
     };
     window.addEventListener('online', handleOnline);
     return () => window.removeEventListener('online', handleOnline);
-  }, [handlePhotoSynced]);
+  }, [authUser, handlePhotoSynced]);
 
   const handleSavePhotoToTodayVault = async (photo: WorkActivityPhoto): Promise<boolean> => {
     return await updateCurrentReport((rep) => {
@@ -740,8 +903,8 @@ export default function App() {
           id: `rec_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
           reportDate: selectedDate,
           date: selectedDate,
-          employeeId: appState.userProfile.employeeId || 'EMP-001',
-          employeeName: appState.userProfile.employeeName || 'ROTH DARO',
+          employeeId: appStateRef.current.userProfile.employeeId || 'EMP-001',
+          employeeName: appStateRef.current.userProfile.employeeName || 'ROTH DARO',
           imageUrl: photo.imageUrl,
           thumbnailUrl: photo.thumbnailUrl || photo.imageUrl,
           workCategory: null,
@@ -817,19 +980,11 @@ export default function App() {
   }, [currentLanguage]);
 
   const handleToggleLanguage = (newLang: 'en' | 'km') => {
-    setAppState((prev) => {
-      const updatedProfile: UserProfile = {
-        ...prev.userProfile,
-        language: newLang,
-      };
-      if (authUser) {
-        saveUserProfileToFirestore(authUser.uid, updatedProfile);
-      }
-      return {
-        ...prev,
-        userProfile: updatedProfile,
-      };
-    });
+    const updatedProfile: UserProfile = {
+      ...appStateRef.current.userProfile,
+      language: newLang,
+    };
+    handleSaveProfile(updatedProfile);
   };
 
   const todayActivities = currentReport.activities || [];

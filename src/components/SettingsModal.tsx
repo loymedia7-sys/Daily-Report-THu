@@ -33,7 +33,7 @@ interface SettingsModalProps {
   onSaveProfile: (updatedProfile: UserProfile) => void;
   appState: AppState;
   onRestoreState: (state: AppState) => void;
-  onResetAllData?: () => Promise<void>;
+  onResetAllData?: () => Promise< { success: boolean; error?: string } | void>;
   language?: Language;
 }
 
@@ -56,6 +56,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [isResetting, setIsResetting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
   const [isTestingCloudinary, setIsTestingCloudinary] = useState(false);
   const [testCloudinaryResult, setTestCloudinaryResult] = useState<{ success: boolean; message: string } | null>(null);
 
@@ -77,10 +78,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         success: true,
         message: `✓ Success! Connected & uploaded test photo (${res.secureUrl})`,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
       setTestCloudinaryResult({
         success: false,
-        message: `✗ Error: ${err.message || String(err)}`,
+        message: `✗ Error: ${msg}`,
       });
     } finally {
       setIsTestingCloudinary(false);
@@ -91,6 +93,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (isOpen) {
       setProfile(userProfile);
       setUploadStatus(null);
+      setResetError(null);
     }
   }, [isOpen, userProfile]);
 
@@ -126,7 +129,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       } else {
         setUploadStatus(language === 'km' ? '✓ បានរក្សាទុក Logo រួចរាល់!' : '✓ Logo stored & ready to sync with Firebase!');
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Logo upload error:', err);
       alert(language === 'km' ? 'មិនអាចផ្ទុករូបភាពបានទេ។ សូមសាកល្បងម្ដងទៀត។' : 'Failed to process logo image. Please try another image file.');
     } finally {
@@ -190,7 +193,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         } else {
           alert(language === 'km' ? 'ទម្រង់ឯកសារមិនត្រឹមត្រូវទេ។' : 'Invalid backup file format.');
         }
-      } catch (err) {
+      } catch {
         alert(language === 'km' ? 'មិនអាចបើកឯកសារបម្រុងទុកបានទេ។' : 'Failed to parse backup file.');
       }
     };
@@ -583,6 +586,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <p className="text-xs font-bold text-rose-900">
                   ⚠️ {language === 'km' ? 'តើអ្នកប្រាកដទេ? រាល់ទិន្នន័យទាំងអស់នឹងត្រូវបានសម្អាតឡើងវិញ។' : 'Are you sure? All checklist usage and report data will be wiped clean for a fresh start.'}
                 </p>
+                {resetError && (
+                  <p className="text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2">
+                    ✗ {resetError}
+                  </p>
+                )}
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -590,10 +598,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     onClick={async () => {
                       if (onResetAllData) {
                         setIsResetting(true);
-                        await onResetAllData();
-                        setIsResetting(false);
-                        setShowResetConfirm(false);
-                        onClose();
+                        setResetError(null);
+                        try {
+                          const res = await onResetAllData();
+                          if (res && res.success === false) {
+                            setResetError(res.error || (language === 'km' ? 'ការសម្អាតទិន្នន័យលើ Cloud បរាជ័យ។' : 'Cloud reset failed. Please check your connection and try again.'));
+                            return;
+                          }
+                          setShowResetConfirm(false);
+                          onClose();
+                        } catch (err: unknown) {
+                          setResetError(err instanceof Error ? err.message : String(err));
+                        } finally {
+                          setIsResetting(false);
+                        }
                       }
                     }}
                     className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 disabled:opacity-60 cursor-pointer"
@@ -613,7 +631,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <button
                     type="button"
                     disabled={isResetting}
-                    onClick={() => setShowResetConfirm(false)}
+                    onClick={() => {
+                      setShowResetConfirm(false);
+                      setResetError(null);
+                    }}
                     className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-all cursor-pointer"
                   >
                     {t.cancel}
@@ -623,7 +644,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             ) : (
               <button
                 type="button"
-                onClick={() => setShowResetConfirm(true)}
+                onClick={() => {
+                  setResetError(null);
+                  setShowResetConfirm(true);
+                }}
                 className="flex items-center gap-1.5 px-3.5 py-2 bg-white border border-rose-300 hover:bg-rose-100/70 text-rose-700 text-xs font-bold rounded-xl shadow-2xs transition-all cursor-pointer"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
